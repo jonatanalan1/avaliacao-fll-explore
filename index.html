@@ -1099,6 +1099,8 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .bp-meta{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
 .bp-foot{display:grid;grid-template-columns:1fr 200px;gap:var(--sp-md);margin-top:var(--sp-md)}
 @media (max-width:620px){.bp-foot{grid-template-columns:1fr}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.msym.spin{animation:spin 1s linear infinite}
 </style>
 
 <div id="app" role="main"></div>
@@ -1163,7 +1165,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1558,14 +1560,14 @@ const store = {
   _poll: null,
 
   /* modo Google: carrega tudo depois do login e acompanha as mudanças a cada 15 s */
-  async gasLoad(token) {
-    const r = await gasCall("bootstrap", token);
+  async gasLoad(token, pre) {
+    const r = pre || await gasCall("bootstrap", token);
     COLLECTIONS.forEach((c) => { this.data[c] = (r.data && r.data[c]) || {}; });
     this.base = r.base || null;
     this.ts = r.ts;
     session.who = r.who;
     clearInterval(this._poll);
-    this._poll = setInterval(() => { if (!document.hidden) this.gasSync(); }, 15000);
+    this._poll = setInterval(() => { if (!document.hidden) this.gasSync(); }, 20000);
     this.emit();
   },
   async gasSync(force) {
@@ -1759,7 +1761,7 @@ async function doLogin(kind, login, pw) {
     if (!r.ok) return r;
     session.token = r.token;
     session.who = r.who;
-    try { await store.gasLoad(r.token); } catch (e) { return { ok: false, msg: "Erro ao carregar os dados: " + String(e?.message || e).slice(0, 100) }; }
+    try { await store.gasLoad(r.token, r.boot); } catch (e) { return { ok: false, msg: "Erro ao carregar os dados: " + String(e?.message || e).slice(0, 100) }; }
     if (kind === "vol") {
       session.user = { id: r.who.id, cpf: r.who.cpf, name: r.who.name, kind: "vol" };
       syncUser();
@@ -1960,6 +1962,7 @@ function viewLogin() {
       .catch(() => { ui.pubLoading = false; toast("Não foi possível carregar a lista de equipes.", "err"); });
   }
   const teamNoPw = store.backend === "gas" && !vol && !(ui.pubTeams?.requireCode);
+  const teamsLoading = store.backend === "gas" && !vol && !ui.pubTeams;
   $("#app").innerHTML = `
   <div class="auth-wrap">
     <div class="stack g-md" style="width:100%;max-width:432px">
@@ -1986,7 +1989,7 @@ function viewLogin() {
             ${vol
               ? `<input id="li-login" type="text" inputmode="numeric" autocomplete="username" required placeholder="000.000.000-00" maxlength="14">`
               : `<div class="combo" id="team-combo">
-                   <input id="li-login" type="text" autocomplete="off" required placeholder="Digite para buscar a equipe"
+                   <input id="li-login" type="text" autocomplete="off" required placeholder="${teamsLoading ? "Carregando as equipes…" : "Digite para buscar a equipe"}" ${teamsLoading ? "disabled" : ""}
                      role="combobox" aria-expanded="false" aria-controls="team-list" aria-autocomplete="list">
                    <span class="msym combo-caret" aria-hidden="true">expand_more</span>
                    <ul class="combo-list" id="team-list" role="listbox" hidden></ul>
@@ -2019,7 +2022,7 @@ function viewLogin() {
   }));
   const login = $("#li-login");
   if (vol) login.addEventListener("input", () => { login.value = maskCPF(login.value); });
-  else bindTeamCombo(login, () => (teamNoPw ? $("#login-form button[type=submit]") : $("#li-pw")).focus());
+  else bindTeamCombo(login, () => (teamNoPw ? $("#login-form").requestSubmit() : $("#li-pw").focus()));
   $("#pw-eye").addEventListener("click", () => {
     const pw = $("#li-pw");
     const show = pw.type === "password";
@@ -2032,9 +2035,15 @@ function viewLogin() {
     const errBox = $("#li-err");
     errBox.hidden = true;
     const btn = $("#login-form button[type=submit]");
+    if (btn.disabled) return;
     btn.disabled = true;
+    const label = btn.innerHTML;
+    btn.innerHTML = `<span class="msym spin">progress_activity</span>Entrando…`;
+    const slow = setTimeout(() => { btn.innerHTML = `<span class="msym spin">progress_activity</span>Conectando ao servidor…`; }, 3500);
     const res = await doLogin(loginKind, login.value, $("#li-pw").value);
+    clearTimeout(slow);
     btn.disabled = false;
+    btn.innerHTML = label;
     if (!res.ok) {
       errBox.hidden = false;
       $("span:last-child", errBox).textContent = res.msg;
@@ -2529,7 +2538,7 @@ function renderRubric(root, team) {
     if (ro) return;
     $("#rb-saved").textContent = "Salvando…";
     clearTimeout(timer);
-    timer = setTimeout(persist, ms ?? 700);
+    timer = setTimeout(persist, store.backend === "gas" ? Math.max(ms ?? 700, 1500) : ms ?? 700);
     refreshFoot();
   };
   ui.flushRubric = () => { if (timer) persist(); };
@@ -4990,6 +4999,11 @@ function render() {
 async function boot() {
   render();
   await store.init();
+  if (store.backend === "gas" && !ui.pubTeams) {
+    ui.pubLoading = true;
+    gasCall("publicTeamNames").then((r) => { ui.pubTeams = r; ui.pubLoading = false; if (!session.user && loginKind === "team") viewLogin(); })
+      .catch(() => { ui.pubLoading = false; });
+  }
   const cached = session.load();
   if (store.backend === "gas") {
     if (cached?.token) {
