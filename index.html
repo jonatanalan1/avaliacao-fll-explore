@@ -1167,7 +1167,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "2.5.0";
+const APP_VERSION = "2.5.1";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1767,6 +1767,10 @@ async function doLogin(kind, login, pw) {
     let r;
     try { r = await gasCall("login", kind, login, pw || ""); } catch (e) { return { ok: false, msg: "Não foi possível entrar: " + String(e?.message || e).slice(0, 140) + ". Tente de novo em alguns segundos." }; }
     if (!r.ok) return r;
+    if (kind !== "vol" && !Object.values(r.boot?.data?.teams || {}).some((t) => t.baseId === r.who.baseId)) {
+      /* confere antes de carregar: carregar redesenha a tela e apagaria este aviso */
+      return { ok: false, msg: "Senha correta, mas a equipe ainda não foi colocada em nenhum evento. Peça à organização para incluí-la no evento (aba Equipes)." };
+    }
     session.token = r.token;
     session.who = r.who;
     try { await store.gasLoad(r.token, r.boot); } catch (e) { return { ok: false, msg: "Erro ao carregar os dados: " + String(e?.message || e).slice(0, 100) }; }
