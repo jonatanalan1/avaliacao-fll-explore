@@ -1101,9 +1101,11 @@ tr.nv-out td{background:var(--sys-warning-container)}
 @media (max-width:620px){.bp-foot{grid-template-columns:1fr}}
 @keyframes spin{to{transform:rotate(360deg)}}
 .msym.spin{animation:spin 1s linear infinite}
+.app-version{position:fixed;right:10px;bottom:6px;z-index:70;font:500 10px/1 "Roboto Mono",monospace;color:var(--sys-on-surface-variant);opacity:.7;pointer-events:none}
 </style>
 
 <div id="app" role="main"></div>
+<div class="app-version no-print" id="app-version"></div>
 <div id="modals"></div>
 <div id="toasts" aria-live="polite"></div>
 
@@ -1165,7 +1167,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.4.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1981,7 +1983,7 @@ function viewLogin() {
         </div>
         <p class="small muted" style="margin:var(--sp-sm) 0 var(--sp-lg)">
           ${vol ? "Use o seu CPF e a senha recebida da organização do evento."
-                : teamNoPw ? "Escolha o nome da equipe na lista." : store.backend === "gas" ? "Escolha o nome da equipe e digite a senha da equipe (o Cód Equipe)." : "Use o nome da equipe e a senha recebida pelo tutor."}
+                : teamNoPw ? "Escolha o nome da equipe na lista." : store.backend === "gas" ? "Escolha o nome da equipe e digite o código (senha) da equipe." : "Use o nome da equipe e a senha recebida pelo tutor."}
         </p>
         <div class="stack g-md">
           <div class="field">
@@ -2008,6 +2010,7 @@ function viewLogin() {
       </form>
       <div class="row g-2xs" style="justify-content:center">
         ${backendChip(true)}
+        <span class="chip chip-out" title="Versão do sistema"><span class="msym">new_releases</span>v${APP_VERSION}</span>
       </div>
 
     </div>
@@ -5017,6 +5020,7 @@ function render() {
 })();
 
 async function boot() {
+  $("#app-version").textContent = "v" + APP_VERSION;
   render();
   await store.init();
   if (store.backend === "gas" && !ui.pubTeams) {
