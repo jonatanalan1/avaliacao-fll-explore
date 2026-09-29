@@ -285,6 +285,19 @@ input:disabled,select:disabled,textarea:disabled{background:var(--surface-3);col
 @media (max-width:760px){
   .appbar .bmark > div{display:none}
 }
+/* celular: a barra cabe na largura da tela (nome do evento encolhe com reticências) */
+.event-pill{min-width:0}
+.appbar .right{flex:none}
+@media (max-width:600px){
+  .appbar{gap:var(--sp-2xs);padding:0 var(--sp-xs)}
+  .appbar .event-pill{flex:1 1 auto;padding:0 var(--sp-xs)}
+  .appbar .right > .chip{display:none}
+  .appbar .usr-btn .msym{display:none}
+}
+html,body{overflow-x:clip}
+@media (max-width:600px){
+  .rb-status{flex-basis:100%;flex-direction:row!important;align-items:center!important;gap:var(--sp-sm)!important}
+}
 .event-pill{
   display:flex;align-items:center;gap:var(--sp-2xs);
   height:36px;padding:0 var(--sp-sm);border-radius:var(--rf);
@@ -1167,7 +1180,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "2.5.1";
+const APP_VERSION = "2.5.3";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1467,10 +1480,17 @@ async function gasCall(fn, ...args) {
   for (let tent = 0; tent < 3; tent++) {
     if (tent) await new Promise((r) => setTimeout(r, 1200 * tent));
     let res;
-    try { res = await fetch(API_URL, { method: "POST", body: JSON.stringify({ fn, args }), redirect: "follow" }); }
-    catch (e) { last = new Error("sem conexão com o servidor (internet?)"); continue; }
+    /* o Google às vezes "trava" uma execução por minutos: desiste em 25 s e tenta de novo (a próxima costuma vir em 1–2 s) */
+    const ctl = new AbortController();
+    const lim = setTimeout(() => ctl.abort(), 25000);
     let out;
-    try { out = await res.json(); } catch (e) { last = new Error("o Google respondeu com erro (HTTP " + res.status + ")"); continue; }
+    try {
+      res = await fetch(API_URL, { method: "POST", body: JSON.stringify({ fn, args }), redirect: "follow", signal: ctl.signal });
+      try { out = await res.json(); } catch (e) { if (ctl.signal.aborted) throw e; last = new Error("o Google respondeu com erro (HTTP " + res.status + ")"); continue; }
+    } catch (e) {
+      last = new Error(ctl.signal.aborted ? "o servidor do Google demorou demais" : "sem conexão com o servidor (internet?)");
+      continue;
+    } finally { clearTimeout(lim); }
     if (!out.ok) throw new Error(out.error || "Erro no servidor");
     return out.result;
   }
@@ -2014,7 +2034,7 @@ function viewLogin() {
               <button type="button" class="icon-btn" id="pw-eye" aria-label="Mostrar senha"><span class="msym">visibility</span></button>
             </div>
           </div>
-          <div id="li-err" class="banner crit" hidden><span class="msym">error</span><span></span></div>
+          <div id="li-err" class="banner crit" ${ui.resumeFail ? "" : "hidden"}><span class="msym">error</span><span>${esc(ui.resumeFail || "")}</span></div>
           <button class="btn btn-fill" type="submit" style="width:100%"><span class="msym">login</span>Entrar</button>
         </div>
       </form>
@@ -2451,9 +2471,9 @@ function renderRubric(root, team) {
           <h1>${esc(team.name)}</h1>
           <p class="muted small">${meta || "&nbsp;"}</p>
         </div>
-        <div class="stack g-4xs" style="align-items:flex-end">
-          ${evalChip(st)}
-          <span class="small muted" id="rb-saved">${saved?.updatedAt ? "Salvo " + fmtDT(saved.updatedAt) : ""}</span>
+        <div class="stack g-4xs rb-status" style="align-items:flex-end">
+          <span id="rb-chip">${evalChip(st)}</span>
+          <span class="small muted" id="rb-saved" style="display:block;min-height:1.4em;white-space:nowrap">${saved?.updatedAt ? "Salvo " + fmtDT(saved.updatedAt) : ""}</span>
         </div>
       </div>
 
@@ -2545,7 +2565,7 @@ function renderRubric(root, team) {
     ui.silent = true;
     const p = store.put("evaluations", body);
     ui.silent = false;
-    try { await p; $("#rb-saved") && ($("#rb-saved").textContent = "Salvo " + fmtDT(nowISO())); } catch (err) { /* toast já avisou */ }
+    try { await p; $("#rb-saved") && ($("#rb-saved").textContent = "Salvo " + fmtDT(nowISO())); $("#rb-chip") && ($("#rb-chip").innerHTML = evalChip(evalStatus(myEval(team.id)))); } catch (err) { /* toast já avisou */ }
   };
   const schedule = (ms) => {
     if (ro) return;
@@ -2594,7 +2614,7 @@ function renderRubric(root, team) {
     $$(`.lvl[data-c="${c}"]`).forEach((x) => x.setAttribute("aria-checked", x === b));
     const wrap = $(`[data-exc-wrap="${c}"]`);
     wrap.hidden = v !== 4;
-    if (v === 4 && !String(e.excede[c] || "").trim()) setTimeout(() => $("textarea", wrap).focus(), 60);
+    if (v === 4 && !String(e.excede[c] || "").trim() && !matchMedia("(pointer:coarse)").matches) setTimeout(() => $("textarea", wrap).focus({ preventScroll: true }), 60);
     schedule(250);
   }));
   $$("[data-exc]").forEach((t) => t.addEventListener("input", () => { e.excede[t.dataset.exc] = t.value; schedule(); }));
@@ -5043,13 +5063,17 @@ async function boot() {
     if (cached?.token) {
       try {
         session.token = cached.token;
-        await store.gasLoad(cached.token);
+        await Promise.race([store.gasLoad(cached.token),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("o servidor do Google demorou demais")), 15000))]);
         session.user = { id: cached.id, kind: cached.kind, cpf: session.who?.cpf, name: session.who?.name };
         session.eventId = cached.eventId || null;
         session.tab = cached.tab || null;
         try { session.teamIds = JSON.parse(sessionStorage.getItem("explore.teamIds") || "null"); } catch (e) { /* ignora */ }
         syncUser();
-      } catch (e) { session.token = null; session.user = null; session.save(); }
+      } catch (e) {
+        session.token = null; session.user = null; session.save();
+        ui.resumeFail = "Não foi possível retomar a sessão (" + String(e?.message || e).slice(0, 80) + "). Entre de novo.";
+      }
     }
   } else await bootstrapNacional();
   if (store.backend !== "gas" && cached?.id) {
@@ -5062,7 +5086,11 @@ async function boot() {
   store.onChange(() => {
     if (ui.silent || modalStack.length) return;
     if (document.activeElement?.matches("input,textarea,select")) return;
+    /* rubrica aberta: não redesenha no meio do preenchimento (a tela "pulava" no celular) */
+    if (ui.flushRubric && /^#\/avaliar\//.test(location.hash)) return;
+    const y = window.scrollY;
     render();
+    window.scrollTo(0, y);
   });
   window.addEventListener("hashchange", () => {
     ui.flushRubric?.();
