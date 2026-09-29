@@ -1165,7 +1165,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.3.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1981,7 +1981,7 @@ function viewLogin() {
         </div>
         <p class="small muted" style="margin:var(--sp-sm) 0 var(--sp-lg)">
           ${vol ? "Use o seu CPF e a senha recebida da organização do evento."
-                : teamNoPw ? "Escolha o nome da equipe na lista." : store.backend === "gas" ? "Use o nome da equipe e o Cód Equipe." : "Use o nome da equipe e a senha recebida pelo tutor."}
+                : teamNoPw ? "Escolha o nome da equipe na lista." : store.backend === "gas" ? "Escolha o nome da equipe e digite a senha da equipe (o Cód Equipe)." : "Use o nome da equipe e a senha recebida pelo tutor."}
         </p>
         <div class="stack g-md">
           <div class="field">
@@ -1996,7 +1996,7 @@ function viewLogin() {
                  </div>`}
           </div>
           <div class="field" ${teamNoPw ? "hidden" : ""}>
-            <label for="li-pw">${!vol && store.backend === "gas" ? "Cód Equipe" : "Senha"}</label>
+            <label for="li-pw">${!vol && store.backend === "gas" ? "Senha da equipe" : "Senha"}</label>
             <div class="pw-wrap">
               <input id="li-pw" type="password" autocomplete="current-password" required>
               <button type="button" class="icon-btn" id="pw-eye" aria-label="Mostrar senha"><span class="msym">visibility</span></button>
@@ -4838,11 +4838,27 @@ function baseNotLoaded() {
   toast("A lista da base ainda não chegou. Aguarde alguns segundos e tente de novo.", "info");
   store.gasSync(true);
 }
+/* botão "Atualizar da planilha": relê a base agora (linha nova no Drive) */
+function bindBaseRefresh(el, after) {
+  const b = $("#bp-refresh", el);
+  if (!b) return;
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    b.innerHTML = `<span class="msym sm spin">progress_activity</span>Lendo a planilha…`;
+    try {
+      store.base = await gasCall("refreshBase", session.token);
+      after();
+      toast(`Base atualizada: ${store.base.volunteers.length} voluntários e ${store.base.teams.length} equipes.`);
+    } catch (e) { gasError(e); }
+    b.disabled = false;
+    b.innerHTML = `<span class="msym sm">sync</span>Atualizar da planilha`;
+  });
+}
 /* vincula voluntários da base ao evento (opts.nacional = adicionar à Operação Nacional) */
 function basePeoplePicker(opts = {}) {
   if (!store.base) return baseNotLoaded();
   const ev = opts.nacional ? null : currentEvent();
-  const base = store.base.volunteers.slice().sort(byName);
+  let base = store.base.volunteers.slice().sort(byName);
   const ufs = [...new Set(base.map((v) => v.uf).filter(Boolean))].sort();
   const f = { q: "", uf: "", int: "", login: true };
   const chosen = new Set();
@@ -4854,6 +4870,7 @@ function basePeoplePicker(opts = {}) {
         <select id="bp-uf"><option value="">Todas as UF</option>${ufs.map((u) => `<option>${esc(u)}</option>`).join("")}</select>
         <select id="bp-int" title="Interesse em ser avaliador (1 a 4)"><option value="">Interesse avaliador: todos</option><option value="3">Interesse 3 ou 4</option><option value="4">Interesse 4</option></select>
         <label class="check small"><input type="checkbox" id="bp-login" checked> Só quem tem login</label>
+        <button type="button" class="btn btn-text btn-sm" id="bp-refresh"><span class="msym sm">sync</span>Atualizar da planilha</button>
       </div>
       <div class="bp-list" id="bp-list"></div>
       ${opts.nacional ? "" : `<div class="bp-foot">
@@ -4887,6 +4904,7 @@ function basePeoplePicker(opts = {}) {
       $("#bp-uf", el).addEventListener("change", (e) => { f.uf = e.target.value; draw(); });
       $("#bp-int", el).addEventListener("change", (e) => { f.int = e.target.value; draw(); });
       $("#bp-login", el).addEventListener("change", (e) => { f.login = e.target.checked; draw(); });
+      bindBaseRefresh(el, () => { base = store.base.volunteers.slice().sort(byName); draw(); });
       $("[data-ok]", el).addEventListener("click", async () => {
         const roles = opts.nacional ? null : $$("[data-brole]", el).filter((c) => c.checked).map((c) => c.dataset.brole);
         if (roles && !roles.length) return toast("Marque pelo menos uma função.", "err");
@@ -4917,7 +4935,7 @@ function basePeoplePicker(opts = {}) {
 function baseTeamsPicker() {
   if (!store.base) return baseNotLoaded();
   const ev = currentEvent();
-  const base = store.base.teams.slice().sort(byName);
+  let base = store.base.teams.slice().sort(byName);
   const ufs = [...new Set(base.map((t) => t.state).filter(Boolean))].sort();
   const f = { q: "", uf: "" };
   const chosen = new Set();
@@ -4929,6 +4947,7 @@ function baseTeamsPicker() {
         <div class="search-box" style="margin:0;flex:1;min-width:200px"><span class="msym">search</span><input type="text" id="bp-q" placeholder="Equipe, código, instituição ou cidade" autocomplete="off"></div>
         <select id="bp-uf"><option value="">Todas as UF</option>${ufs.map((u) => `<option>${esc(u)}</option>`).join("")}</select>
         <button type="button" class="btn btn-text btn-sm" id="bp-all">Marcar as visíveis</button>
+        <button type="button" class="btn btn-text btn-sm" id="bp-refresh"><span class="msym sm">sync</span>Atualizar da planilha</button>
       </div>
       <div class="bp-list" id="bp-list"></div>
       <div class="bp-foot"><div class="field"><label for="bp-room">Sala</label><select id="bp-room"><option value="">Sem sala (distribuir depois)</option>${roomsOf(ev.id).map((r) => `<option value="${attr(r.id)}">${esc(r.name)}</option>`).join("")}</select></div></div>`,
@@ -4955,6 +4974,7 @@ function baseTeamsPicker() {
       draw();
       $("#bp-q", el).addEventListener("input", (e) => { f.q = e.target.value; draw(); });
       $("#bp-uf", el).addEventListener("change", (e) => { f.uf = e.target.value; draw(); });
+      bindBaseRefresh(el, () => { base = store.base.teams.slice().sort(byName); draw(); });
       $("#bp-all", el).addEventListener("click", () => { $$("[data-bp]:not(:disabled)", el).forEach((c) => { c.checked = true; chosen.add(c.dataset.bp); }); upd(); });
       $("[data-ok]", el).addEventListener("click", async () => {
         const room = $("#bp-room", el).value;
