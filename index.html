@@ -1134,12 +1134,12 @@ tr.nv-out td{background:var(--sys-warning-container)}
    Firestore e o login anônimo, e cole aqui os dados do seu projeto.
    ========================================================================== */
 const FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: "",
+  apiKey: "AIzaSyDOJziRZXJOYb_k_N2qDeZbClqKLeKTJBk",
+  authDomain: "avaliacao-fll-explore.firebaseapp.com",
+  projectId: "avaliacao-fll-explore",
+  storageBucket: "avaliacao-fll-explore.firebasestorage.app",
+  messagingSenderId: "470024439101",
+  appId: "1:470024439101:web:8f694f3af166e357fff154",
 };
 /* ========================================================================== */
 
@@ -1151,8 +1151,11 @@ const FIREBASE_CONFIG = {
    Com ela preenchida, a página lê as planilhas base e grava na planilha de
    saída — pode ficar hospedada no GitHub Pages.
    Vazio = modo local (dados só neste navegador, para demonstração).
+   Desde a versão 3.0 o sistema usa o Firebase (bloco acima). Para voltar
+   ao modo planilha, cole de novo a URL antiga:
+   https://script.google.com/macros/s/AKfycbx6pan8MKODLZa0iWI2oKPJ5gvo7Y5DTAUFEf3nEXWcUO70RNZbUgk5gtzWOMxMe74J6A/exec
    ========================================================================== */
-const API_URL = "https://script.google.com/macros/s/AKfycbx6pan8MKODLZa0iWI2oKPJ5gvo7Y5DTAUFEf3nEXWcUO70RNZbUgk5gtzWOMxMe74J6A/exec";
+const API_URL = "";
 /* ========================================================================== */
 
 
@@ -1180,7 +1183,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "2.5.3";
+const APP_VERSION = "3.0.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1504,6 +1507,362 @@ function gasError(e) {
   return false;
 }
 
+/* ------------------------------------------------------------
+   MODO FIREBASE (Conectado): banco em tempo real + login seguro.
+   A senha de ninguém fica guardada. Na importação da base, cada
+   pessoa/equipe vira um "acesso" cujo nome é a impressão digital
+   (SHA-256) de login + senha. No primeiro login, o sistema acha o
+   acesso e cria a conta sozinho. As regras do Firestore
+   (firestore.rules) decidem o que cada papel lê e grava.
+   ------------------------------------------------------------ */
+const NACIONAL_CPFS = ["11111111111", "05160542957"];   /* os mesmos das regras do Firestore */
+const FB_DOMINIO = "fllexplore.app";                     /* só dá nome às contas; nenhum e-mail é enviado */
+const FB_COL_EVENTO = ["teams", "rooms", "evaluations", "settings", "deliberation"];
+function isFb() { return !!(typeof FIREBASE_CONFIG !== "undefined" && FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey) && !isGas(); }
+/* modo com servidor (Google ou Firebase): base central, login no servidor */
+function srv() { return store.backend === "gas" || store.backend === "fb"; }
+function srvCall(fn, ...args) { return store.backend === "fb" ? FB.call(fn, ...args) : gasCall(fn, ...args); }
+function fbMsg(e) {
+  const c = e?.code || "";
+  if (c.includes("permission-denied")) return "sem permissão para isso";
+  if (c.includes("unavailable") || c.includes("network")) return "sem conexão com a internet";
+  if (c.includes("too-many-requests")) return "muitas tentativas; espere um minuto";
+  return String(e?.message || e || "erro").replace(/^Firebase:\s*/, "").slice(0, 140);
+}
+const shaTxt = (s) => sha256Hex(new TextEncoder().encode(s));
+
+const FB = {
+  auth: null, db: null, conta: null, who: null,
+  _unsubs: [], _evUnsubs: {}, _parts: {}, _evKey: "", _devTimer: {},
+
+  async init() {
+    const V = "10.13.2", base = "https://www.gstatic.com/firebasejs/" + V + "/";
+    await loadScript(base + "firebase-app-compat.js");
+    await loadScript(base + "firebase-auth-compat.js");
+    await loadScript(base + "firebase-firestore-compat.js");
+    if (!window.firebase) throw new Error("SDK do Firebase não carregou");
+    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    this.auth = firebase.auth();
+    this.db = firebase.firestore();
+    const emu = new URLSearchParams(location.search).get("emu");     /* testes locais */
+    if (emu && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+      this.auth.useEmulator("http://127.0.0.1:9099");
+      this.db.useEmulator("127.0.0.1", 8080);
+    }
+    await new Promise((res) => { const off = this.auth.onAuthStateChanged(() => { off(); res(); }); });
+  },
+
+  /* ---------- acesso: login + senha → impressão digital ---------- */
+  chave(kind, login) { return kind === "vol" ? cpfFromCell(login) : norm(login); },
+  acesso(kind, chave, pw) {
+    const p = kind === "vol" ? String(pw ?? "").trim() : norm(pw);
+    return shaTxt(`fllx|1|${kind}|${chave}|${p}`);
+  },
+  email(kind, chave, gen) {
+    return (kind === "vol" ? "v" + chave : "e" + shaTxt("eq|" + chave).slice(0, 20)) + "g" + gen + "@" + FB_DOMINIO;
+  },
+
+  async call(fn, ...args) {
+    const f = {
+      publicTeamNames: () => this.publicTeamNames(),
+      login: (kind, login, pw) => this.login(kind, login, pw),
+      verifyPassword: (_t, pw) => this.verifyPassword(pw),
+      refreshBase: () => this.loadBase(),
+    }[fn];
+    if (!f) throw new Error("Função indisponível no modo Conectado: " + fn);
+    return f(...args);
+  },
+
+  async publicTeamNames() {
+    const d = await this.db.doc("publico/equipes").get();
+    const x = d.exists ? d.data() : {};
+    return { requireCode: true, teams: x.teams || [] };
+  },
+
+  async login(kind, login, pw) {
+    const chave = this.chave(kind, login);
+    const bad = { ok: false, msg: kind === "vol" ? "CPF ou senha incorretos." : "Nome da equipe ou senha incorretos." };
+    if (kind === "vol" && chave.length !== 11) return { ok: false, msg: "Digite os 11 números do CPF." };
+    if (!chave) return { ok: false, msg: "Escolha o nome da equipe na lista." };
+    if (!String(pw ?? "").trim()) return bad;
+    const h = this.acesso(kind, chave, pw);
+    const a = await this.db.doc("acessos/" + h).get();
+    if (!a.exists) return bad;
+    const ad = a.data();
+    const senhaConta = "fx" + h;           /* só chega a este valor quem sabe a senha de verdade */
+    try { await this.auth.signInWithEmailAndPassword(ad.email, senhaConta); }
+    catch (e) {
+      if (!/user-not-found|invalid-credential|invalid-login-credentials|wrong-password/.test(e.code || "")) throw e;
+      try { await this.auth.createUserWithEmailAndPassword(ad.email, senhaConta); }
+      catch (e2) {
+        if (/email-already-in-use/.test(e2.code || "")) return { ok: false, msg: "Este acesso precisa ser redefinido pela Operação Nacional." };
+        throw e2;
+      }
+    }
+    const conta = kind === "vol" ? { kind, cpf: ad.cpf, acesso: h, name: ad.name || "" } : { kind, baseId: ad.baseId, acesso: h, name: ad.name || "" };
+    await this.db.doc("contas/" + this.auth.currentUser.uid).set(conta);
+    if (kind === "team") {
+      const q = await this.db.collection("teams").where("baseId", "==", ad.baseId).limit(1).get();
+      if (q.empty) {
+        await this.auth.signOut();
+        return { ok: false, msg: "Senha correta, mas a equipe ainda não foi colocada em nenhum evento. Peça à organização para incluí-la no evento (aba Equipes)." };
+      }
+    }
+    this.conta = conta;
+    this.who = this.whoDe(conta);
+    return { ok: true, token: "fb", who: this.who };
+  },
+  whoDe(c) {
+    return c.kind === "vol"
+      ? { kind: "vol", id: "vol-" + c.cpf, cpf: c.cpf, name: c.name || fmtCPF(c.cpf), nacional: NACIONAL_CPFS.includes(c.cpf) }
+      : { kind: "team", baseId: c.baseId, name: c.name };
+  },
+  /* recarregou a página: continua logado se a conta ainda vale */
+  async resume() {
+    const u = this.auth.currentUser;
+    if (!u) return null;
+    const c = await this.db.doc("contas/" + u.uid).get();
+    if (!c.exists) { await this.auth.signOut(); return null; }
+    const a = await this.db.doc("acessos/" + c.data().acesso).get();
+    if (!a.exists) { await this.auth.signOut(); return null; }     /* senha trocada na base */
+    this.conta = c.data();
+    this.who = this.whoDe(this.conta);
+    return this.who;
+  },
+  async verifyPassword(pw) {
+    const c = this.conta;
+    if (!c || c.kind !== "vol") return false;
+    return this.acesso("vol", c.cpf, pw) === c.acesso;
+  },
+
+  /* ---------- dados em tempo real ---------- */
+  _junta(col) {
+    store.data[col] = Object.assign({}, ...Object.values(this._parts[col] || {}));
+  },
+  _assina(lista, col, parte, query, mapa) {
+    let off = null;
+    const p = new Promise((resolve) => {
+      let primeira = true;
+      off = query.onSnapshot((snap) => {
+        const m = {};
+        snap.docs.forEach((d) => { const x = { id: d.id, ...d.data() }; const y = mapa ? mapa(x) : x; if (y) m[y.id] = y; });
+        (this._parts[col] = this._parts[col] || {})[parte] = m;
+        this._junta(col);
+        if (primeira) { primeira = false; resolve(); } else {
+          store.emit();
+          if (col === "evaluations") this._devTodos();
+        }
+      }, (err) => {
+        console.warn("assinatura", col, parte, err.code);
+        if (primeira) { primeira = false; resolve(); }
+      });
+    });
+    lista.push(() => { off && off(); if (this._parts[col]) { delete this._parts[col][parte]; this._junta(col); } });
+    return p;
+  },
+  stop() {
+    this._unsubs.forEach((f) => f()); this._unsubs = [];
+    Object.values(this._evUnsubs).forEach((l) => l.forEach((f) => f())); this._evUnsubs = {};
+    this._parts = {}; this._evKey = "";
+  },
+  async start(who) {
+    this.stop();
+    COLLECTIONS.forEach((c) => { store.data[c] = {}; });
+    const db = this.db, L = this._unsubs, espera = [];
+    espera.push(this._assina(L, "events", "all", db.collection("events")));
+    if (who.kind === "team") {
+      espera.push(this._assina(L, "teams", "meu", db.collection("teams").where("baseId", "==", who.baseId)));
+      espera.push(this._assina(L, "settings", "lib", db.collection("liberacoes"), (x) => ({ id: x.eventId || x.id, released: !!x.released })));
+      espera.push(this._assina(L, "evaluations", "dev", db.collection("devolutivas").where("baseId", "==", who.baseId)));
+      await Promise.all(espera);
+      return;
+    }
+    espera.push(this._assina(L, "users", "all", db.collection("users")));
+    await Promise.all(espera);
+    await this._eventos();
+    /* Operação Nacional fixa no código: garante o registro dela */
+    if (NACIONAL_CPFS.includes(who.cpf) && !store.get("users", who.id)?.nacional) {
+      await this.put("users", { id: who.id, cpf: who.cpf, name: who.name, nacional: true, bootstrap: true, active: true, roles: {}, rooms: {}, createdAt: nowISO() }).catch(() => {});
+    }
+    if (this.organiza()) this.loadBase().catch((e) => console.warn("base", e));
+  },
+  nacional() {
+    const w = this.who;
+    return !!w && w.kind === "vol" && (NACIONAL_CPFS.includes(w.cpf) || !!store.get("users", w.id)?.nacional);
+  },
+  organiza() {
+    const u = this.who && store.get("users", this.who.id);
+    return this.nacional() || Object.values(u?.roles || {}).some((r) => (r || []).includes("regional"));
+  },
+  /* coleções de evento: tudo para a Nacional; por evento para os demais */
+  async _eventos() {
+    const w = this.who, db = this.db;
+    const nac = this.nacional();
+    const u = store.get("users", w.id);
+    const evs = nac ? ["*"] : Object.keys(u?.roles || {}).filter((ev) => (u.roles[ev] || []).length).sort();
+    const key = evs.join(",");
+    if (key === this._evKey) return;
+    this._evKey = key;
+    Object.keys(this._evUnsubs).forEach((ev) => { if (!evs.includes(ev)) { this._evUnsubs[ev].forEach((f) => f()); delete this._evUnsubs[ev]; } });
+    const espera = [];
+    evs.filter((ev) => !this._evUnsubs[ev]).forEach((ev) => {
+      const L = (this._evUnsubs[ev] = []);
+      FB_COL_EVENTO.forEach((col) => {
+        const q = ev === "*" ? db.collection(col) : db.collection(col).where("eventId", "==", ev);
+        espera.push(this._assina(L, col, ev, q));
+      });
+    });
+    await Promise.all(espera);
+  },
+
+  /* ---------- gravação ---------- */
+  _limpo(o) { return JSON.parse(JSON.stringify(o)); },
+  async put(col, obj) {
+    const { id, ...body } = obj;
+    if (col === "users") body._ev = session.eventId || null;           /* as regras conferem em qual evento a mudança vale */
+    if (col === "settings") body.eventId = id;
+    if (col === "deliberation" && !body.eventId) body.eventId = store.get("teams", body.teamId || id)?.eventId || session.eventId;
+    await this.db.doc(`${col}/${id}`).set(this._limpo(body));
+    if (col === "users" && id === this.who?.id) this._eventos().catch(() => {});
+    if (col === "settings" && this.liderEv(id)) await this.devolutivas(id);
+    if (col === "evaluations") this._devDepois(body.eventId);
+  },
+  async remove(col, id, ev) {
+    await this.db.doc(`${col}/${id}`).delete();
+    if (col === "evaluations") this._devDepois(ev);
+  },
+  liderEv(ev) {
+    const u = this.who && store.get("users", this.who.id);
+    return this.nacional() || (u?.roles?.[ev] || []).includes("lider");
+  },
+  /* avaliação chegou depois da liberação: o Líder/Nacional conectado atualiza a devolutiva */
+  _devTodos() {
+    if (this.who?.kind !== "vol") return;
+    store.all("settings").filter((c) => c.released).forEach((c) => this._devDepois(c.eventId || c.id));
+  },
+  /* liberação da devolutiva: a equipe lê só esta cópia (notas e justificativas do "Excede", sem nomes) */
+  _devDepois(ev) {
+    if (!ev || !store.get("settings", ev)?.released || !this.liderEv(ev)) return;
+    clearTimeout(this._devTimer[ev]);
+    this._devTimer[ev] = setTimeout(() => this.devolutivas(ev).catch((e) => console.warn("devolutivas", e)), 2500);
+  },
+  async devolutivas(ev) {
+    const on = !!store.get("settings", ev)?.released;
+    const db = this.db;
+    await db.doc("liberacoes/" + ev).set({ eventId: ev, released: on, at: nowISO() });
+    const quero = {};
+    if (on) {
+      teamsOf(ev).forEach((t) => {
+        evalsOfTeam(t.id).filter((e) => e.status === "sent")
+          .sort((a, b) => (a.firstSentAt || a.sentAt || "").localeCompare(b.firstSentAt || b.sentAt || ""))
+          .forEach((e, i) => {
+            const id = t.id + "__" + (i + 1);
+            quero[id] = this._limpo({ teamId: t.id, eventId: ev, baseId: t.baseId || "", scores: e.scores || {}, excede: e.excede || {}, status: "sent", sentAt: e.sentAt || null, firstSentAt: e.firstSentAt || e.sentAt || null });
+          });
+      });
+    }
+    const tem = await db.collection("devolutivas").where("eventId", "==", ev).get();
+    const ops = [];
+    tem.docs.forEach((d) => { if (!quero[d.id]) ops.push((b) => b.delete(d.ref)); });
+    Object.entries(quero).forEach(([id, x]) => ops.push((b) => b.set(db.doc("devolutivas/" + id), x)));
+    await this.lotes(ops);
+  },
+  async lotes(ops) {
+    for (let i = 0; i < ops.length; i += 400) {
+      const b = this.db.batch();
+      ops.slice(i, i + 400).forEach((f) => f(b));
+      await b.commit();
+    }
+  },
+  async audit(eventId, entry) {
+    const key = eventId || "_global";
+    await this.db.doc("audit/" + key).set({ eventId: key, entries: firebase.firestore.FieldValue.arrayUnion(entry) }, { merge: true });
+  },
+  async loadAudit(eventId) {
+    const d = await this.db.doc("audit/" + (eventId || "_global")).get();
+    return d.exists ? (d.data().entries || []).slice().sort((a, b) => (b.at || "").localeCompare(a.at || "")) : [];
+  },
+  async removeAudit(eventId) { await this.db.doc("audit/" + (eventId || "_global")).delete(); },
+
+  /* ---------- base de cadastro (voluntários e equipes) ---------- */
+  async loadBase() {
+    const [p, e] = await Promise.all([this.db.collection("pessoas").get(), this.db.collection("base_equipes").get()]);
+    store.base = {
+      volunteers: p.docs.map((d) => ({ id: "vol-" + d.id, cpf: d.id, ...d.data() })),
+      teams: e.docs.map((d) => ({ baseId: d.id, ...d.data() })),
+    };
+    return store.base;
+  },
+  /* grava voluntários: [{cpf, name, senha? | acesso?, city, uf, interest, etapa, explore}] */
+  async gravarPessoas(rows, progresso) {
+    const db = this.db, ops = [];
+    const idx = await this._idx("v-");
+    for (const r of rows) {
+      const cpf = cpfFromCell(r.cpf);
+      if (cpf.length !== 11) continue;
+      const doc = { name: String(r.name || "").trim() || fmtCPF(cpf), city: r.city || "", uf: r.uf || "", interest: r.interest || "", etapa: r.etapa || "", explore: r.explore || "", updatedAt: nowISO() };
+      const h = r.acesso || (String(r.senha ?? "").trim() ? this.acesso("vol", cpf, r.senha) : "");
+      const cur = idx["v-" + cpf];
+      if (h) {
+        doc.hasLogin = true;
+        /* acesso fixo da Nacional (senha teste123) deixa de valer quando ganha senha própria */
+        const semente = NACIONAL_CPFS.includes(cpf) ? this.acesso("vol", cpf, "teste123") : "";
+        if (semente && semente !== h) ops.push((b) => b.delete(db.doc("acessos/" + semente)));
+        if (!cur || cur.acesso !== h) {
+          const gen = cur ? (cur.gen || 1) + 1 : 1;
+          if (cur?.acesso) ops.push((b) => b.delete(db.doc("acessos/" + cur.acesso)));
+          ops.push((b) => b.set(db.doc("acessos/" + h), { kind: "vol", cpf, name: doc.name, email: this.email("vol", cpf, gen) }));
+          ops.push((b) => b.set(db.doc("acessos_idx/v-" + cpf), { acesso: h, gen }));
+        } else ops.push((b) => b.set(db.doc("acessos/" + h), { kind: "vol", cpf, name: doc.name, email: this.email("vol", cpf, cur.gen || 1) }));
+      } else if (!cur) doc.hasLogin = false;
+      ops.push((b) => b.set(db.doc("pessoas/" + cpf), doc, { merge: true }));
+    }
+    progresso && progresso(0, ops.length);
+    await this.lotes(ops);
+    await this.loadBase();
+  },
+  /* grava equipes: [{name, senha? | acesso?, baseId?, code, school, city, state, members, coach}] */
+  async gravarEquipes(rows) {
+    const db = this.db, ops = [];
+    const idx = await this._idx("t-");
+    for (const r of rows) {
+      const name = String(r.name || "").trim();
+      const chave = norm(name);
+      if (!chave) continue;
+      const baseId = String(r.baseId || r.code || "").trim() || "EQ-" + chave.replace(/[^a-z0-9]+/g, "-").toUpperCase();
+      const doc = { name, key: chave, code: r.code || "", school: r.school || "", city: r.city || "", state: r.state || "", members: r.members || "", coach: r.coach || "", updatedAt: nowISO() };
+      const h = r.acesso || (String(r.senha ?? "").trim() ? this.acesso("team", chave, r.senha) : "");
+      const cur = idx["t-" + baseId];
+      if (h) {
+        doc.hasLogin = true;
+        if (!cur || cur.acesso !== h) {
+          const gen = cur ? (cur.gen || 1) + 1 : 1;
+          if (cur?.acesso) ops.push((b) => b.delete(db.doc("acessos/" + cur.acesso)));
+          ops.push((b) => b.set(db.doc("acessos/" + h), { kind: "team", baseId, name, email: this.email("team", chave, gen) }));
+          ops.push((b) => b.set(db.doc("acessos_idx/t-" + baseId), { acesso: h, gen }));
+        } else ops.push((b) => b.set(db.doc("acessos/" + h), { kind: "team", baseId, name, email: this.email("team", chave, cur.gen || 1) }));
+      } else if (!cur) doc.hasLogin = false;
+      ops.push((b) => b.set(db.doc("base_equipes/" + baseId), doc, { merge: true }));
+    }
+    await this.lotes(ops);
+    await this.loadBase();
+    await this.publicarNomes();
+  },
+  async _idx(pre) {
+    const s = await this.db.collection("acessos_idx").get();
+    const m = {};
+    s.docs.forEach((d) => { if (d.id.startsWith(pre)) m[d.id] = d.data(); });
+    return m;
+  },
+  /* lista pública do login da equipe: só nome e cidade */
+  async publicarNomes() {
+    const teams = (store.base?.teams || []).filter((t) => t.hasLogin !== false)
+      .map((t) => ({ name: t.name, key: t.key || norm(t.name), city: t.city || "", state: t.state || "" }))
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
+    await this.db.doc("publico/equipes").set({ teams, at: nowISO() });
+  },
+};
+
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     if (document.querySelector(`script[src="${src}"]`)) return resolve();
@@ -1547,6 +1906,16 @@ const store = {
   get(col, id) { return id ? this.data[col]?.[id] || null : null; },
 
   async init() {
+    if (isFb()) {
+      /* modo Conectado: os dados só chegam depois do login */
+      this.backend = "fb";
+      this.mode = "cloud";
+      try { await FB.init(); }
+      catch (e) { console.warn(e); toast("Não foi possível conectar ao banco. Verifique a internet e recarregue.", "err"); }
+      this.ready = true;
+      this.emit();
+      return;
+    }
     if (isGas()) {
       /* no modo Google os dados só chegam depois do login */
       this.backend = "gas";
@@ -1615,7 +1984,11 @@ const store = {
       if (changed) this.emit();
     } catch (e) { if (String(e?.message || e).includes("SESSAO_EXPIRADA")) gasError(e); }
   },
-  gasStop() { clearInterval(this._poll); this._poll = null; this.base = null; COLLECTIONS.forEach((c) => { this.data[c] = {}; }); },
+  gasStop() {
+    clearInterval(this._poll); this._poll = null; this.base = null;
+    if (this.backend === "fb") FB.stop();
+    COLLECTIONS.forEach((c) => { this.data[c] = {}; });
+  },
 
   _loadLocal() {
     try {
@@ -1667,6 +2040,11 @@ const store = {
       try { await gasCall("put", session.token, col, obj); } catch (e) { gasError(e); throw e; }
       return obj;
     }
+    if (this.backend === "fb") {
+      try { await FB.put(col, obj); }
+      catch (e) { toast("Não foi possível salvar: " + fbMsg(e), "err"); throw e; }
+      return obj;
+    }
     if (this.mode === "cloud") {
       const { id, ...body } = obj;
       try { await this.db.doc(`${col}/${id}`).set(body); }
@@ -1676,10 +2054,15 @@ const store = {
   },
 
   async remove(col, id) {
+    const ev = this.data[col]?.[id]?.eventId;
     delete this.data[col][id];
     this.emit();
     if (this.backend === "gas") {
       try { await gasCall("remove", session.token, col, id); } catch (e) { gasError(e); }
+      return;
+    }
+    if (this.backend === "fb") {
+      try { await FB.remove(col, id, ev); } catch (e) { toast("Não foi possível excluir: " + fbMsg(e), "err"); }
       return;
     }
     if (this.mode === "cloud") {
@@ -1699,6 +2082,7 @@ const store = {
       detail: detail || "",
     };
     if (this.backend === "gas") { if (session.token) gasCall("audit", session.token, eventId || "", entry).catch(() => {}); return; }
+    if (this.backend === "fb") { if (session.token) FB.audit(eventId, entry).catch(() => {}); return; }
     const cur = this.data.audit[key] || { id: key, entries: [] };
     cur.entries = [entry, ...(cur.entries || [])].slice(0, 700);
     this.data.audit[key] = cur;
@@ -1708,6 +2092,7 @@ const store = {
   },
   async removeAudit(eventId) {
     const key = eventId || "_global";
+    if (this.backend === "fb") { try { await FB.removeAudit(eventId); } catch (e) { /* já pode não existir */ } return; }
     delete this.data.audit[key];
     if (this.mode === "cloud") {
       try { await this.db.doc(`audit/${key}`).delete(); } catch (e) { /* já pode não existir */ }
@@ -1715,6 +2100,7 @@ const store = {
   },
   async loadAudit(eventId) {
     const key = eventId || "_global";
+    if (this.backend === "fb") { try { return await FB.loadAudit(eventId); } catch (e) { return []; } }
     if (this.mode === "cloud") {
       try {
         const d = await this.db.doc(`audit/${key}`).get();
@@ -1746,7 +2132,7 @@ const session = {
 function syncUser() {
   const u = session.user;
   if (!u) return;
-  if (store.backend === "gas" && u.kind === "vol") {
+  if (srv() && u.kind === "vol") {
     /* a pessoa vem da base; o documento "users" só guarda funções e salas */
     const fresh = store.get("users", u.id);
     const w = session.who || {};
@@ -1783,17 +2169,19 @@ function myEvents() {
 }
 
 async function doLogin(kind, login, pw) {
-  if (store.backend === "gas") {
+  if (srv()) {
     let r;
-    try { r = await gasCall("login", kind, login, pw || ""); } catch (e) { return { ok: false, msg: "Não foi possível entrar: " + String(e?.message || e).slice(0, 140) + ". Tente de novo em alguns segundos." }; }
+    try { r = await srvCall("login", kind, login, pw || ""); }
+    catch (e) { return { ok: false, msg: "Não foi possível entrar: " + (store.backend === "fb" ? fbMsg(e) : String(e?.message || e).slice(0, 140)) + ". Tente de novo em alguns segundos." }; }
     if (!r.ok) return r;
-    if (kind !== "vol" && !Object.values(r.boot?.data?.teams || {}).some((t) => t.baseId === r.who.baseId)) {
+    if (store.backend === "fb") r.boot = { data: null };
+    if (store.backend === "gas" && kind !== "vol" && !Object.values(r.boot?.data?.teams || {}).some((t) => t.baseId === r.who.baseId)) {
       /* confere antes de carregar: carregar redesenha a tela e apagaria este aviso */
       return { ok: false, msg: "Senha correta, mas a equipe ainda não foi colocada em nenhum evento. Peça à organização para incluí-la no evento (aba Equipes)." };
     }
     session.token = r.token;
     session.who = r.who;
-    try { await store.gasLoad(r.token, r.boot); } catch (e) { return { ok: false, msg: "Erro ao carregar os dados: " + String(e?.message || e).slice(0, 100) }; }
+    try { if (store.backend === "fb") await FB.start(r.who); else await store.gasLoad(r.token, r.boot); } catch (e) { return { ok: false, msg: "Erro ao carregar os dados: " + String(e?.message || e).slice(0, 100) }; }
     if (kind === "vol") {
       session.user = { id: r.who.id, cpf: r.who.cpf, name: r.who.name, kind: "vol" };
       syncUser();
@@ -1838,7 +2226,8 @@ async function doLogin(kind, login, pw) {
   return { ok: true };
 }
 function logout() {
-  if (store.backend === "gas") { store.gasStop(); session.token = null; session.who = null; }
+  if (srv()) { store.gasStop(); session.token = null; session.who = null; }
+  if (store.backend === "fb") FB.auth?.signOut().catch(() => {});
   session.user = null;
   session.eventId = null;
   session.tab = null;
@@ -1912,7 +2301,7 @@ function confirmWithPassword(title, message, okLabel) {
       footer: `<button class="btn btn-text" data-close>Cancelar</button><button class="btn btn-fill" data-ok><span class="msym">lock_open</span>${esc(okLabel)}</button>`,
       onMount: (el, close) => {
         const go = async () => {
-          const ok = store.backend === "gas" ? await gasCall("verifyPassword", session.token, $("#cf-pw", el).value).catch(() => false)
+          const ok = srv() ? await srvCall("verifyPassword", session.token, $("#cf-pw", el).value).catch(() => false)
             : await checkPw(store.get("users", session.user?.id), $("#cf-pw", el).value);
           if (!ok) {
             $("#cf-err", el).hidden = false;
@@ -1941,7 +2330,7 @@ try { loginKind = localStorage.getItem("explore.loginKind") === "team" ? "team" 
 function bindTeamCombo(input, onPick) {
   const list = $("#team-list");
   const seen = new Set();
-  const teams = (store.backend === "gas" ? (ui.pubTeams?.teams || []) : store.all("teams")).filter((t) => (seen.has(t.key) ? false : seen.add(t.key)))
+  const teams = (srv() ? (ui.pubTeams?.teams || []) : store.all("teams")).filter((t) => (seen.has(t.key) ? false : seen.add(t.key)))
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
   let items = [], active = -1;
   const open = (on) => { list.hidden = !on; input.setAttribute("aria-expanded", on); };
@@ -1988,13 +2377,13 @@ function bindTeamCombo(input, onPick) {
 function viewLogin() {
   const vol = loginKind === "vol";
   /* modo Google: nomes das equipes vêm do servidor (só nome e cidade) */
-  if (store.backend === "gas" && !vol && !ui.pubTeams && !ui.pubLoading) {
+  if (srv() && !vol && !ui.pubTeams && !ui.pubLoading) {
     ui.pubLoading = true;
-    gasCall("publicTeamNames").then((r) => { ui.pubTeams = r; ui.pubLoading = false; if (!session.user) viewLogin(); })
+    srvCall("publicTeamNames").then((r) => { ui.pubTeams = r; ui.pubLoading = false; if (!session.user) viewLogin(); })
       .catch(() => { ui.pubLoading = false; toast("Não foi possível carregar a lista de equipes.", "err"); });
   }
-  const teamNoPw = store.backend === "gas" && !vol && !(ui.pubTeams?.requireCode);
-  const teamsLoading = store.backend === "gas" && !vol && !ui.pubTeams;
+  const teamNoPw = srv() && !vol && !!ui.pubTeams && !ui.pubTeams.requireCode;
+  const teamsLoading = srv() && !vol && !ui.pubTeams;
   $("#app").innerHTML = `
   <div class="auth-wrap">
     <div class="stack g-md" style="width:100%;max-width:432px">
@@ -2013,7 +2402,7 @@ function viewLogin() {
         </div>
         <p class="small muted" style="margin:var(--sp-sm) 0 var(--sp-lg)">
           ${vol ? "Use o seu CPF e a senha recebida da organização do evento."
-                : teamNoPw ? "Escolha o nome da equipe na lista." : store.backend === "gas" ? "Escolha o nome da equipe e digite o código (senha) da equipe." : "Use o nome da equipe e a senha recebida pelo tutor."}
+                : teamNoPw ? "Escolha o nome da equipe na lista." : srv() ? "Escolha o nome da equipe e digite o código (senha) da equipe." : "Use o nome da equipe e a senha recebida pelo tutor."}
         </p>
         <div class="stack g-md">
           <div class="field">
@@ -2028,7 +2417,7 @@ function viewLogin() {
                  </div>`}
           </div>
           <div class="field" ${teamNoPw ? "hidden" : ""}>
-            <label for="li-pw">${!vol && store.backend === "gas" ? "Senha da equipe" : "Senha"}</label>
+            <label for="li-pw">${!vol && srv() ? "Senha da equipe" : "Senha"}</label>
             <div class="pw-wrap">
               <input id="li-pw" type="password" autocomplete="current-password" required>
               <button type="button" class="icon-btn" id="pw-eye" aria-label="Mostrar senha"><span class="msym">visibility</span></button>
@@ -2090,6 +2479,9 @@ function viewLogin() {
    8. SHELL
    ============================================================ */
 function backendChip(longo) {
+  if (store.backend === "fb") {
+    return `<span class="chip chip-out" title="Dados no banco online, atualizados em tempo real para todos"><span class="msym">cloud_done</span>Conectado</span>`;
+  }
   if (store.backend === "gas") {
     return `<span class="chip chip-out" title="Dados na planilha Google, compartilhados por todos"><span class="msym">cloud_done</span>${longo ? "Planilha Google" : "Google"}</span>`;
   }
@@ -2156,7 +2548,7 @@ function bindShellBar() {
             <div class="small muted">${roles.map((r) => ROLE_LABEL[r]).join(" · ")}</div>
           </div>
         </div>`,
-      footer: `${u.kind === "vol" && store.backend !== "gas" ? `<button class="btn btn-out" data-pw><span class="msym">key</span>Alterar senha</button>` : ""}
+      footer: `${u.kind === "vol" && !srv() ? `<button class="btn btn-out" data-pw><span class="msym">key</span>Alterar senha</button>` : ""}
                <button class="btn btn-text right" data-close>Fechar</button>
                <button class="btn btn-danger-out" data-out><span class="msym">logout</span>Sair</button>`,
       onMount: (el, close) => {
@@ -3653,6 +4045,7 @@ function viewEventPicker() {
             </button>
           </div>`;
         }).join("")}</div>`}
+      ${nac && store.backend === "fb" ? baseSection() : ""}
       ${nac ? nacionalSection() : ""}
     </div>`;
   bindShellBar();
@@ -3661,6 +4054,7 @@ function viewEventPicker() {
   $$("[data-ev-del]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); deleteEventModal(store.get("events", b.dataset.evDel)); }));
   $$("[data-ev]").forEach((b) => b.addEventListener("click", () => enterEvent(b.dataset.ev)));
   bindNacionalSection();
+  bindBaseSection();
 }
 function enterEvent(evId, tab) {
   session.eventId = evId;
@@ -3705,6 +4099,10 @@ function eventFormModal(ev) {
         const date = $("#ev-date", el).value;
         if (!name || !date) return toast("Preencha o nome e a data.", "err");
         if (ev && ev.type !== t && teamsOf(ev.id).length) return toast("O evento já tem equipes: não dá para trocar o tipo.", "err");
+        const btn = $("[data-save]", el);
+        if (btn.disabled) return;
+        btn.disabled = true;
+        btn.innerHTML = `<span class="msym spin">progress_activity</span>Salvando…`;
         const saved = await store.put("events", {
           ...(ev || {}), id: ev?.id || uid("ev"), name, type: t, date,
           city: $("#ev-city", el).value.trim(), state: $("#ev-state", el).value.trim().toUpperCase(),
@@ -3805,7 +4203,7 @@ function nacionalSection() {
   </div>`;
 }
 function bindNacionalSection() {
-  $("#nac-add")?.addEventListener("click", () => (store.backend === "gas" ? basePeoplePicker({ nacional: true }) : personFormModal(null, { nacional: true })));
+  $("#nac-add")?.addEventListener("click", () => (srv() ? basePeoplePicker({ nacional: true }) : personFormModal(null, { nacional: true })));
   $$("[data-nac-rm]").forEach((b) => b.addEventListener("click", async () => {
     const u = store.get("users", b.dataset.nacRm);
     if (!(await confirmModal("Remover da Operação Nacional", `<b>${esc(u.name)}</b> perde o acesso a todos os eventos. As funções dela em eventos específicos continuam.`, "Remover", true))) return;
@@ -3839,10 +4237,10 @@ function renderPeople(root) {
       <div class="grow">
         <div class="eyebrow">${eventEyebrow()}</div>
         <h1>Voluntários</h1>
-        <p class="muted small">Pessoas deste evento e as funções de cada uma. As funções valem só para este evento; ${store.backend === "gas" ? "o cadastro e a senha vêm da planilha base." : "o CPF e a senha valem para todos."}</p>
+        <p class="muted small">Pessoas deste evento e as funções de cada uma. As funções valem só para este evento; ${srv() ? "o cadastro e a senha vêm da base de cadastro." : "o CPF e a senha valem para todos."}</p>
       </div>
       <div class="row g-2xs wrap no-print">
-        ${store.backend === "gas" ? `<button class="btn btn-fill" id="pv-base"><span class="msym">person_add</span>Vincular da base</button>` : `
+        ${srv() ? `<button class="btn btn-fill" id="pv-base"><span class="msym">person_add</span>Vincular da base</button>` : `
         <button class="btn btn-out" id="pv-tpl"><span class="msym">download</span>Modelo</button>
         <button class="btn btn-out" id="pv-imp"><span class="msym">upload_file</span>Importar Excel</button>
         <button class="btn btn-out" id="pv-paste"><span class="msym">content_paste</span>Colar do Excel</button>
@@ -3850,7 +4248,7 @@ function renderPeople(root) {
       </div>
     </div>
     ${!count("regional") ? `<div class="banner warn" style="margin-bottom:var(--sp-md)"><span class="msym">warning</span>
-      <div>Este evento ainda não tem <b>Operador Regional</b>. ${can.nac() ? (store.backend === "gas" ? "Vincule uma pessoa da base com a função Operador Regional." : "Adicione uma pessoa e marque a função Operador Regional.") : "Só a Operação Nacional nomeia o Operador Regional."}</div></div>` : ""}
+      <div>Este evento ainda não tem <b>Operador Regional</b>. ${can.nac() ? (srv() ? "Vincule uma pessoa da base com a função Operador Regional." : "Adicione uma pessoa e marque a função Operador Regional.") : "Só a Operação Nacional nomeia o Operador Regional."}</div></div>` : ""}
     <div class="kpi-grid kpi-4" style="margin-bottom:var(--sp-lg)">
       <div class="kpi"><span class="k">Pessoas</span><span class="v">${all.length}</span><span class="sub">neste evento</span></div>
       <div class="kpi"><span class="k">Operador Regional</span><span class="v">${count("regional")}</span><span class="sub">organiza as pessoas</span></div>
@@ -3871,7 +4269,7 @@ function renderPeople(root) {
           <td class="mid">${u.active === false ? `<span class="chip chip-crit">Desativado</span>` : `<span class="chip chip-ok"><span class="msym">check</span>Ativo</span>`}</td>
           <td><div class="row g-2xs" style="justify-content:flex-end">
             <button class="icon-btn sm" data-pv-edit="${attr(u.id)}" title="Editar"><span class="msym sm">edit</span></button>
-            ${store.backend === "gas" ? "" : `<button class="icon-btn sm" data-pv-pw="${attr(u.id)}" title="Nova senha"><span class="msym sm">key</span></button>`}
+            ${srv() ? "" : `<button class="icon-btn sm" data-pv-pw="${attr(u.id)}" title="Nova senha"><span class="msym sm">key</span></button>`}
             <button class="icon-btn sm" data-pv-rm="${attr(u.id)}" title="Remover deste evento"><span class="msym sm">person_remove</span></button>
           </div></td>
         </tr>`).join("")}</tbody>
@@ -4176,11 +4574,11 @@ function renderTeamsAdmin(root) {
         <h1>Equipes</h1>
         <p class="muted small">${ev.type === "nacional"
           ? "Evento nacional: traga as equipes classificadas nos regionais ou adicione."
-          : "Evento regional: cada equipe participa de um único regional."} ${store.backend === "gas" ? "As equipes vêm da planilha base." : "O login da equipe é o nome + a senha."}</p>
+          : "Evento regional: cada equipe participa de um único regional."} ${srv() ? "As equipes vêm da base de cadastro." : "O login da equipe é o nome + a senha."}</p>
       </div>
       <div class="row g-2xs wrap no-print">
         ${ev.type === "nacional" ? `<button class="btn btn-tonal" id="pt-bring"><span class="msym">move_down</span>Trazer classificadas</button>` : ""}
-        ${store.backend === "gas" ? `<button class="btn btn-fill" id="pt-base"><span class="msym">group_add</span>Adicionar da base</button>` : `
+        ${srv() ? `<button class="btn btn-fill" id="pt-base"><span class="msym">group_add</span>Adicionar da base</button>` : `
         <button class="btn btn-out" id="pt-tpl"><span class="msym">download</span>Modelo</button>
         <button class="btn btn-out" id="pt-imp"><span class="msym">upload_file</span>Importar Excel</button>
         <button class="btn btn-out" id="pt-paste"><span class="msym">content_paste</span>Colar do Excel</button>
@@ -4204,7 +4602,7 @@ function renderTeamsAdmin(root) {
             <td class="num mono">${n}</td>
             <td><div class="row g-2xs" style="justify-content:flex-end">
               <button class="icon-btn sm" data-pt-edit="${attr(t.id)}" title="Editar"><span class="msym sm">edit</span></button>
-              ${store.backend === "gas" ? "" : `<button class="icon-btn sm" data-pt-pw="${attr(t.id)}" title="Nova senha"><span class="msym sm">key</span></button>`}
+              ${srv() ? "" : `<button class="icon-btn sm" data-pt-pw="${attr(t.id)}" title="Nova senha"><span class="msym sm">key</span></button>`}
               <button class="icon-btn sm" data-pt-del="${attr(t.id)}" title="Excluir"><span class="msym sm">delete</span></button>
             </div></td>
           </tr>`;
@@ -4239,10 +4637,10 @@ function renderTeamsAdmin(root) {
 function teamFormModal(t) {
   const ev = currentEvent();
   const isNew = !t;
-  if (store.backend === "gas" && t) {
+  if (srv() && t) {
     openModal({
       title: t.name, icon: "groups",
-      body: `<p class="small muted" style="margin-bottom:var(--sp-md)">${esc([t.code, t.school, [t.city, t.state].filter(Boolean).join("/")].filter(Boolean).join(" · "))}<br>${t.coach ? "Tutores: " + esc(t.coach) : ""}<br>Os dados vêm da planilha base e não são alterados aqui.</p>
+      body: `<p class="small muted" style="margin-bottom:var(--sp-md)">${esc([t.code, t.school, [t.city, t.state].filter(Boolean).join("/")].filter(Boolean).join(" · "))}<br>${t.coach ? "Tutores: " + esc(t.coach) : ""}<br>Os dados vêm da base de cadastro e não são alterados aqui.</p>
         <div class="field"><label for="tf-room">Sala</label><select id="tf-room"><option value="">Sem sala</option>${roomsOf(ev.id).map((r) => `<option value="${attr(r.id)}" ${t.roomId === r.id ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></div>`,
       footer: `<button class="btn btn-text" data-close>Cancelar</button><button class="btn btn-fill" data-ok>Salvar</button>`,
       onMount: (el, close) => $("[data-ok]", el).addEventListener("click", async () => { close(); await store.put("teams", { ...t, roomId: $("#tf-room", el).value }); toast("Salvo."); }),
@@ -4864,12 +5262,280 @@ function distributeTeamsModal(rooms, teams, tRoom) {
 }
 
 /* ============================================================
+   8.13 BASE DE CADASTRO (modo Conectado, só Operação Nacional)
+   Voluntários (CPF + senha) e equipes (nome + código) que podem
+   entrar no sistema. Importa planilha (Excel/CSV/colar), cadastra
+   um a um, exporta e redefine senha. A senha nunca é guardada.
+   ============================================================ */
+function baseSection() {
+  const b = store.base;
+  return `
+  <div class="card" style="margin-top:var(--sp-xl)">
+    <div class="sec-title"><h2>Base de cadastro</h2>
+      <button class="btn btn-out btn-sm right" id="base-imp"><span class="msym">upload_file</span>Importar</button></div>
+    <p class="small muted" style="margin-bottom:var(--sp-md)">Quem pode entrar no sistema. Depois de cadastrados aqui, voluntários e equipes são vinculados a cada evento pelas abas Voluntários e Equipes.</p>
+    <div class="row g-sm wrap">
+      <button class="btn btn-tonal" id="base-vol"><span class="msym">badge</span>Voluntários <b class="mono">${b ? b.volunteers.length : "…"}</b></button>
+      <button class="btn btn-tonal" id="base-eq"><span class="msym">groups</span>Equipes <b class="mono">${b ? b.teams.length : "…"}</b></button>
+    </div>
+  </div>`;
+}
+function bindBaseSection() {
+  $("#base-imp")?.addEventListener("click", () => baseImportModal());
+  $("#base-vol")?.addEventListener("click", () => baseListModal("vol"));
+  $("#base-eq")?.addEventListener("click", () => baseListModal("team"));
+  if (!store.base && store.backend === "fb") FB.loadBase().then(() => { if ($("#base-vol")) render(); }).catch(() => {});
+}
+
+function baseListModal(kind) {
+  if (!store.base) return baseNotLoaded();
+  const vol = kind === "vol";
+  let q = "";
+  openModal({
+    title: vol ? "Voluntários da base" : "Equipes da base", icon: vol ? "badge" : "groups", size: "wide",
+    body: `
+      <div class="bp-filters">
+        <div class="search-box" style="margin:0;flex:1;min-width:200px"><span class="msym">search</span><input type="text" id="bl-q" placeholder="${vol ? "Nome, CPF ou cidade" : "Equipe, código, escola ou cidade"}" autocomplete="off"></div>
+        <button type="button" class="btn btn-out btn-sm" id="bl-add"><span class="msym sm">add</span>Adicionar</button>
+        <button type="button" class="btn btn-text btn-sm" id="bl-csv"><span class="msym sm">download</span>Exportar</button>
+      </div>
+      <div class="bp-list" id="bl-list"></div>`,
+    footer: `<span class="small muted" id="bl-count"></span><button class="btn btn-text right" data-close>Fechar</button>`,
+    onMount: (el, close) => {
+      const draw = () => {
+        const nq = norm(q), qd = onlyDigits(q);
+        const all = (vol ? store.base.volunteers : store.base.teams).slice().sort(byName);
+        const list = all.filter((x) => !nq || (vol
+          ? norm(x.name).includes(nq) || norm(x.city).includes(nq) || (qd.length >= 3 && x.cpf.includes(qd))
+          : [x.name, x.code, x.school, x.city].some((v) => norm(v).includes(nq))));
+        $("#bl-count", el).textContent = `${list.length} de ${all.length}`;
+        $("#bl-list", el).innerHTML = !list.length ? `<p class="small muted" style="padding:var(--sp-md)">${all.length ? "Ninguém com essa busca." : "A base está vazia. Use Importar ou Adicionar."}</p>`
+          : list.slice(0, 300).map((x) => `<div class="bp-row">
+              <span class="bp-main"><b>${esc(x.name)}</b><span class="small muted">${vol
+                ? `${fmtCPF(x.cpf)} · ${esc([x.city, x.uf].filter(Boolean).join("/"))}`
+                : esc([x.code, x.school, [x.city, x.state].filter(Boolean).join("/")].filter(Boolean).join(" · "))}</span></span>
+              <span class="bp-meta small">${x.hasLogin === false ? `<span class="chip chip-warn">sem senha</span>` : ""}
+                <button class="btn btn-text btn-sm" data-bl-pw="${attr(vol ? x.cpf : x.baseId)}"><span class="msym sm">key</span>${x.hasLogin === false ? "Definir senha" : "Nova senha"}</button></span>
+            </div>`).join("") + (list.length > 300 ? `<p class="small muted" style="padding:var(--sp-sm)">Mostrando 300 de ${list.length}. Use a busca.</p>` : "");
+        $$("[data-bl-pw]", el).forEach((b) => b.addEventListener("click", () => {
+          const x = vol ? store.base.volunteers.find((v) => v.cpf === b.dataset.blPw) : store.base.teams.find((t) => t.baseId === b.dataset.blPw);
+          baseFormModal(kind, x, draw);
+        }));
+      };
+      draw();
+      $("#bl-q", el).addEventListener("input", (e) => { q = e.target.value; draw(); });
+      $("#bl-add", el).addEventListener("click", () => baseFormModal(kind, null, draw));
+      $("#bl-csv", el).addEventListener("click", () => baseExport(kind));
+    },
+  });
+}
+
+/* cadastro avulso ou nova senha (x = registro existente) */
+function baseFormModal(kind, x, after) {
+  const vol = kind === "vol";
+  const novo = !x;
+  openModal({
+    title: novo ? (vol ? "Adicionar voluntário" : "Adicionar equipe") : `Senha de ${x.name}`, icon: novo ? "person_add" : "key",
+    body: `<div class="form-grid">
+      ${novo ? (vol
+        ? `<div class="field full"><label for="bf-name">Nome <span class="req">*</span></label><input id="bf-name" type="text"></div>
+           <div class="field"><label for="bf-cpf">CPF <span class="req">*</span></label><input id="bf-cpf" type="text" inputmode="numeric" maxlength="14" placeholder="000.000.000-00"></div>
+           <div class="field"><label for="bf-city">Cidade</label><input id="bf-city" type="text"></div>
+           <div class="field"><label for="bf-uf">UF</label><input id="bf-uf" type="text" maxlength="2"></div>`
+        : `<div class="field full"><label for="bf-name">Nome da equipe <span class="req">*</span></label><input id="bf-name" type="text"><span class="hint">É o que a equipe escolhe na lista do login.</span></div>
+           <div class="field"><label for="bf-code">Nº / Cód. da equipe</label><input id="bf-code" type="text"></div>
+           <div class="field"><label for="bf-school">Escola / instituição</label><input id="bf-school" type="text"></div>
+           <div class="field"><label for="bf-city">Cidade</label><input id="bf-city" type="text"></div>
+           <div class="field"><label for="bf-uf">UF</label><input id="bf-uf" type="text" maxlength="2"></div>
+           <div class="field full"><label for="bf-coach">Tutor(a)</label><input id="bf-coach" type="text"></div>`)
+        : `<p class="small muted full">${vol ? `CPF ${fmtCPF(x.cpf)}` : esc(x.school || x.code || "")}. A senha antiga deixa de valer assim que você salvar.</p>`}
+      <div class="field full"><label for="bf-pw">${vol ? "Senha" : "Código (senha da equipe)"} <span class="req">*</span></label>
+        <div class="row g-2xs"><input id="bf-pw" type="text" autocomplete="off" style="flex:1"><button type="button" class="btn btn-out btn-sm" id="bf-gen">Gerar</button></div>
+        <span class="hint">Anote e entregue ${vol ? "à pessoa" : "ao tutor"}: o sistema não guarda a senha, só confere.</span></div>
+    </div>`,
+    footer: `<button class="btn btn-text" data-close>Cancelar</button><button class="btn btn-fill" data-ok><span class="msym">save</span>Salvar</button>`,
+    onMount: (el, close) => {
+      $("#bf-cpf", el)?.addEventListener("input", (e) => { e.target.value = maskCPF(e.target.value); });
+      $("#bf-gen", el).addEventListener("click", () => { $("#bf-pw", el).value = randSalt().slice(0, 8).toUpperCase(); });
+      const ok = $("[data-ok]", el);
+      ok.addEventListener("click", async () => {
+        const senha = $("#bf-pw", el).value.trim();
+        if (senha.length < 4) return toast("A senha precisa de pelo menos 4 caracteres.", "err");
+        let row;
+        if (novo && vol) {
+          row = { cpf: cpfFromCell($("#bf-cpf", el).value), name: $("#bf-name", el).value.trim(), city: $("#bf-city", el).value.trim(), uf: $("#bf-uf", el).value.trim().toUpperCase(), senha };
+          if (row.cpf.length !== 11) return toast("Digite os 11 números do CPF.", "err");
+          if (!row.name) return toast("Preencha o nome.", "err");
+          if (store.base.volunteers.some((v) => v.cpf === row.cpf)) return toast("Este CPF já está na base. Use Nova senha na lista.", "err");
+        } else if (novo) {
+          row = { name: $("#bf-name", el).value.trim(), code: $("#bf-code", el).value.trim(), school: $("#bf-school", el).value.trim(), city: $("#bf-city", el).value.trim(), state: $("#bf-uf", el).value.trim().toUpperCase(), coach: $("#bf-coach", el).value.trim(), senha };
+          if (!row.name) return toast("Preencha o nome da equipe.", "err");
+          if (store.base.teams.some((t) => norm(t.name) === norm(row.name))) return toast("Já existe uma equipe com esse nome.", "err");
+        } else row = { ...x, senha };
+        ok.disabled = true;
+        ok.innerHTML = `<span class="msym spin">progress_activity</span>Salvando…`;
+        try {
+          if (vol) await FB.gravarPessoas([row]); else await FB.gravarEquipes([row]);
+          await store.audit(null, novo ? (vol ? "Voluntário cadastrado na base" : "Equipe cadastrada na base") : "Senha redefinida", row.name);
+          close();
+          toast(novo ? "Cadastrado." : "Senha nova salva.");
+          after && after();
+        } catch (e) {
+          toast("Não foi possível salvar: " + fbMsg(e), "err");
+          ok.disabled = false;
+          ok.innerHTML = `<span class="msym">save</span>Salvar`;
+        }
+      });
+    },
+  });
+}
+
+/* ---------- importação ---------- */
+function csvRows(txt) {
+  /* CSV com aspas; separador vírgula, ponto e vírgula ou tab */
+  const first = String(txt).split(/\r?\n/)[0] || "";
+  const sep = first.includes("\t") ? "\t" : first.split(";").length > first.split(",").length ? ";" : ",";
+  const out = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < txt.length; i++) {
+    const c = txt[i];
+    if (q) { if (c === '"') { if (txt[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === sep) { row.push(cell); cell = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && txt[i + 1] === "\n") i++; row.push(cell); out.push(row); row = []; cell = ""; }
+    else cell += c;
+  }
+  if (cell || row.length) { row.push(cell); out.push(row); }
+  const rows = out.filter((r) => r.some((c) => String(c).trim()));
+  if (!rows.length) return [];
+  const head = rows[0].map(norm);
+  return rows.slice(1).map((r) => { const o = {}; head.forEach((h, j) => { if (h && o[h] === undefined) o[h] = String(r[j] ?? "").trim(); }); return o; });
+}
+async function lerArquivoBase(file) {
+  const nome = file.name.toLowerCase();
+  if (nome.endsWith(".json")) return { json: JSON.parse(await file.text()) };
+  if (/\.(xlsx|xls|ods)$/.test(nome)) {
+    await loadScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    return { abas: wb.SheetNames.map((n) => XLSX.utils.sheet_to_json(wb.Sheets[n], { defval: "", raw: false })
+      .map((r) => { const o = {}; Object.entries(r).forEach(([k, v]) => { const h = norm(k); if (h && o[h] === undefined) o[h] = String(v ?? "").trim(); }); return o; })) };
+  }
+  return { abas: [csvRows(await file.text())] };
+}
+const tem = (abas, ...cols) => abas.find((a) => a.length && cols.every((c) => c in a[0]));
+/* monta voluntários e equipes a partir das abas (mesma lógica das planilhas base) */
+function montarBase(abas) {
+  const vols = [], eqs = [], vistos = new Set();
+  const avol = tem(abas, "cpf", "nome completo") || tem(abas, "cpf", "nome");
+  const senhasVol = {};
+  abas.filter((a) => a.length && "cpf" in a[0] && "senha" in a[0]).forEach((a) => a.forEach((r) => {
+    const c = cpfFromCell(r.cpf); if (c.length === 11 && r.senha && !senhasVol[c]) senhasVol[c] = r.senha;
+  }));
+  if (avol) avol.forEach((r) => {
+    const cpf = cpfFromCell(r.cpf);
+    if (cpf.length !== 11 || vistos.has(cpf)) return;
+    vistos.add(cpf);
+    vols.push({ cpf, name: pick(r, "nome completo", "nome"), senha: pick(r, "senha") || senhasVol[cpf] || "", city: pick(r, "cidade"), uf: pick(r, "uf"),
+      interest: pick(r, "interesse avaliador"), etapa: pick(r, "etapa concluida"), explore: pick(r, "fll explore - papel") });
+  });
+  /* quem tem senha (aba Login) mas não está no cadastro também entra */
+  Object.entries(senhasVol).forEach(([cpf, senha]) => { if (!vistos.has(cpf)) { vistos.add(cpf); vols.push({ cpf, senha }); } });
+  /* lista de equipes: aba com equipe + registro/cód., sem ser a de integrantes (que tem "função") */
+  const lista = (a) => a.length && "equipe" in a[0] && ("cod equipe" in a[0] || "registro" in a[0]) && !("funcao" in a[0]);
+  const aeq = abas.find(lista);
+  const cods = {}, tutores = {};
+  abas.filter((a) => a.length && ("equipe" in a[0] || "nome da equipe" in a[0]) && ("codigo" in a[0])).forEach((a) => a.forEach((r) => {
+    const k = norm(pick(r, "equipe", "nome da equipe")); if (k && r.codigo && !cods[k]) cods[k] = r.codigo;
+  }));
+  abas.filter((a) => a.length && "funcao" in a[0] && "equipe" in a[0] && "nome" in a[0]).forEach((a) => a.forEach((r) => {
+    if (!norm(r.funcao).startsWith("tutor")) return; const k = norm(r.equipe); (tutores[k] = tutores[k] || []).push(r.nome);
+  }));
+  const fonte = aeq || (!avol && tem(abas, "equipe", "codigo"));
+  const eqVistas = new Set();
+  if (fonte) fonte.forEach((r) => {
+    const name = pick(r, "equipe", "nome da equipe");
+    const k = norm(name);
+    if (!k || eqVistas.has(k)) return;
+    eqVistas.add(k);
+    const est = pick(r, "estado", "uf");
+    eqs.push({ name, senha: pick(r, "codigo", "senha") || cods[k] || "", baseId: pick(r, "registro"), code: pick(r, "cod equipe", "numero"),
+      school: pick(r, "instituicao", "escola"), city: pick(r, "cidade"), state: (est.match(/\(([A-Z]{2})\)/) || [])[1] || (est.length === 2 ? est.toUpperCase() : est),
+      members: pick(r, "quantidade de integrantes inscritos"), coach: pick(r, "tutor", "tutores") || (tutores[k] || []).join(" · ") });
+  });
+  return { vols, eqs };
+}
+function baseImportModal() {
+  let dados = null;
+  openModal({
+    title: "Importar para a base", icon: "upload_file", size: "wide",
+    body: `<div class="stack g-md">
+      <p class="small muted">Aceita a planilha de <b>voluntários</b> (colunas CPF, Nome e Senha — a senha pode estar em outra aba, como a aba Login) ou a de <b>equipes</b> (Equipe e Código — o código pode estar em outra aba, como a aba BASE). Pode ser o Excel baixado do Google Planilhas (<i>Arquivo › Fazer download › Microsoft Excel</i>), um CSV ou colar as linhas com o cabeçalho.</p>
+      <p class="small muted">Quem já está na base é atualizado; a senha só muda se vier uma diferente. Linhas sem senha entram sem login.</p>
+      <div class="field"><label for="bi-file">Arquivo</label><input type="file" id="bi-file" accept=".xlsx,.xls,.ods,.csv,.tsv,.txt,.json"></div>
+      <div class="field"><label for="bi-txt">Ou cole aqui</label><textarea id="bi-txt" rows="5" placeholder="CPF&#9;Nome&#9;Senha"></textarea></div>
+      <div id="bi-prev" class="banner info" hidden><span class="msym">fact_check</span><span></span></div>
+    </div>`,
+    footer: `<button class="btn btn-text" data-close>Cancelar</button><button class="btn btn-fill" data-ok disabled><span class="msym">upload</span>Importar</button>`,
+    onMount: (el, close) => {
+      const ok = $("[data-ok]", el);
+      const mostrar = () => {
+        const v = dados?.vols || [], t = dados?.eqs || [];
+        const semV = v.filter((x) => !x.senha && !x.acesso).length, semT = t.filter((x) => !x.senha && !x.acesso).length;
+        const box = $("#bi-prev", el);
+        box.hidden = false;
+        $("span:last-child", box).innerHTML = !v.length && !t.length
+          ? "Não encontrei colunas conhecidas. Confira o cabeçalho (CPF, Nome, Senha ou Equipe, Código)."
+          : [v.length && `<b>${v.length}</b> voluntário(s)${semV ? ` (${semV} sem senha)` : ""}`, t.length && `<b>${t.length}</b> equipe(s)${semT ? ` (${semT} sem código)` : ""}`].filter(Boolean).join(" e ") + " prontos para importar.";
+        ok.disabled = !v.length && !t.length;
+      };
+      $("#bi-file", el).addEventListener("change", async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        try {
+          const r = await lerArquivoBase(f);
+          dados = r.json ? { vols: r.json.voluntarios || [], eqs: r.json.equipes || [] } : montarBase(r.abas);
+        } catch (err) { dados = null; toast("Não consegui ler o arquivo: " + String(err.message || err).slice(0, 80), "err"); }
+        mostrar();
+      });
+      $("#bi-txt", el).addEventListener("input", (e) => { dados = montarBase([csvRows(e.target.value)]); mostrar(); });
+      ok.addEventListener("click", async () => {
+        ok.disabled = true;
+        ok.innerHTML = `<span class="msym spin">progress_activity</span>Importando…`;
+        try {
+          if (dados.vols.length) await FB.gravarPessoas(dados.vols);
+          if (dados.eqs.length) await FB.gravarEquipes(dados.eqs);
+          await store.audit(null, "Base importada", `${dados.vols.length} voluntário(s), ${dados.eqs.length} equipe(s)`);
+          close();
+          toast(`Importado: ${dados.vols.length} voluntário(s) e ${dados.eqs.length} equipe(s).`);
+          render();
+        } catch (err) {
+          toast("A importação parou: " + fbMsg(err), "err");
+          ok.disabled = false;
+          ok.innerHTML = `<span class="msym">upload</span>Importar`;
+        }
+      });
+    },
+  });
+}
+function baseExport(kind) {
+  const vol = kind === "vol";
+  const cols = vol ? [["CPF", (x) => fmtCPF(x.cpf)], ["Nome", "name"], ["Cidade", "city"], ["UF", "uf"], ["Interesse avaliador", "interest"], ["Tem senha", (x) => (x.hasLogin === false ? "não" : "sim")]]
+    : [["Equipe", "name"], ["Registro", "baseId"], ["Cód. equipe", "code"], ["Instituição", "school"], ["Cidade", "city"], ["UF", "state"], ["Tutor(a)", "coach"], ["Tem código", (x) => (x.hasLogin === false ? "não" : "sim")]];
+  const list = (vol ? store.base.volunteers : store.base.teams).slice().sort(byName);
+  const cel = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = "﻿" + [cols.map((c) => cel(c[0])).join(";"), ...list.map((x) => cols.map(([, f]) => cel(typeof f === "function" ? f(x) : x[f])).join(";"))].join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = (vol ? "voluntarios" : "equipes") + "-base.csv";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+/* ============================================================
    8.12 BASE (modo Google) — escolher pessoas e equipes das
    planilhas base, sem alterar nada nelas
    ============================================================ */
 function baseNotLoaded() {
   toast("A lista da base ainda não chegou. Aguarde alguns segundos e tente de novo.", "info");
-  store.gasSync(true);
+  if (store.backend === "fb") FB.loadBase().catch(() => {}); else store.gasSync(true);
 }
 /* botão "Atualizar da planilha": relê a base agora (linha nova no Drive) */
 function bindBaseRefresh(el, after) {
@@ -4877,14 +5543,14 @@ function bindBaseRefresh(el, after) {
   if (!b) return;
   b.addEventListener("click", async () => {
     b.disabled = true;
-    b.innerHTML = `<span class="msym sm spin">progress_activity</span>Lendo a planilha…`;
+    b.innerHTML = `<span class="msym sm spin">progress_activity</span>Atualizando…`;
     try {
-      store.base = await gasCall("refreshBase", session.token);
+      store.base = await srvCall("refreshBase", session.token);
       after();
       toast(`Base atualizada: ${store.base.volunteers.length} voluntários e ${store.base.teams.length} equipes.`);
-    } catch (e) { gasError(e); }
+    } catch (e) { if (store.backend === "fb") toast("Não foi possível atualizar: " + fbMsg(e), "err"); else gasError(e); }
     b.disabled = false;
-    b.innerHTML = `<span class="msym sm">sync</span>Atualizar da planilha`;
+    b.innerHTML = `<span class="msym sm">sync</span>${store.backend === "fb" ? "Atualizar lista" : "Atualizar da planilha"}`;
   });
 }
 /* vincula voluntários da base ao evento (opts.nacional = adicionar à Operação Nacional) */
@@ -4903,7 +5569,7 @@ function basePeoplePicker(opts = {}) {
         <select id="bp-uf"><option value="">Todas as UF</option>${ufs.map((u) => `<option>${esc(u)}</option>`).join("")}</select>
         <select id="bp-int" title="Interesse em ser avaliador (1 a 4)"><option value="">Interesse avaliador: todos</option><option value="3">Interesse 3 ou 4</option><option value="4">Interesse 4</option></select>
         <label class="check small"><input type="checkbox" id="bp-login" checked> Só quem tem login</label>
-        <button type="button" class="btn btn-text btn-sm" id="bp-refresh"><span class="msym sm">sync</span>Atualizar da planilha</button>
+        <button type="button" class="btn btn-text btn-sm" id="bp-refresh"><span class="msym sm">sync</span>${store.backend === "fb" ? "Atualizar lista" : "Atualizar da planilha"}</button>
       </div>
       <div class="bp-list" id="bp-list"></div>
       ${opts.nacional ? "" : `<div class="bp-foot">
@@ -4980,7 +5646,7 @@ function baseTeamsPicker() {
         <div class="search-box" style="margin:0;flex:1;min-width:200px"><span class="msym">search</span><input type="text" id="bp-q" placeholder="Equipe, código, instituição ou cidade" autocomplete="off"></div>
         <select id="bp-uf"><option value="">Todas as UF</option>${ufs.map((u) => `<option>${esc(u)}</option>`).join("")}</select>
         <button type="button" class="btn btn-text btn-sm" id="bp-all">Marcar as visíveis</button>
-        <button type="button" class="btn btn-text btn-sm" id="bp-refresh"><span class="msym sm">sync</span>Atualizar da planilha</button>
+        <button type="button" class="btn btn-text btn-sm" id="bp-refresh"><span class="msym sm">sync</span>${store.backend === "fb" ? "Atualizar lista" : "Atualizar da planilha"}</button>
       </div>
       <div class="bp-list" id="bp-list"></div>
       <div class="bp-foot"><div class="field"><label for="bp-room">Sala</label><select id="bp-room"><option value="">Sem sala (distribuir depois)</option>${roomsOf(ev.id).map((r) => `<option value="${attr(r.id)}">${esc(r.name)}</option>`).join("")}</select></div></div>`,
@@ -5053,9 +5719,9 @@ async function boot() {
   $("#app-version").textContent = "v" + APP_VERSION;
   render();
   await store.init();
-  if (store.backend === "gas" && !ui.pubTeams) {
+  if (srv() && !ui.pubTeams) {
     ui.pubLoading = true;
-    gasCall("publicTeamNames").then((r) => { ui.pubTeams = r; ui.pubLoading = false; if (!session.user && loginKind === "team") viewLogin(); })
+    srvCall("publicTeamNames").then((r) => { ui.pubTeams = r; ui.pubLoading = false; if (!session.user && loginKind === "team") viewLogin(); })
       .catch(() => { ui.pubLoading = false; });
   }
   const cached = session.load();
@@ -5075,8 +5741,34 @@ async function boot() {
         ui.resumeFail = "Não foi possível retomar a sessão (" + String(e?.message || e).slice(0, 80) + "). Entre de novo.";
       }
     }
+  } else if (store.backend === "fb") {
+    /* o Firebase lembra o login: retoma sem pedir a senha de novo */
+    try {
+      const who = await FB.resume();
+      if (who) {
+        session.token = "fb";
+        session.who = who;
+        await Promise.race([FB.start(who),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("a conexão demorou demais")), 15000))]);
+        session.eventId = cached?.eventId || null;
+        session.tab = cached?.tab || null;
+        if (who.kind === "vol") session.user = { id: who.id, cpf: who.cpf, name: who.name, kind: "vol" };
+        else {
+          const hits = store.all("teams").filter((t) => t.baseId === who.baseId);
+          session.teamIds = hits.map((t) => t.id);
+          const pick = hits.find((t) => t.id === cached?.id) || hits[0];
+          session.user = pick ? { ...pick, kind: "team" } : null;
+          if (pick && !session.eventId) session.eventId = hits.length === 1 ? pick.eventId : null;
+        }
+        syncUser();
+        if (!session.user) { store.gasStop(); session.token = null; FB.auth.signOut().catch(() => {}); }
+      }
+    } catch (e) {
+      store.gasStop(); session.token = null; session.user = null; session.save();
+      ui.resumeFail = "Não foi possível retomar a sessão (" + fbMsg(e) + "). Entre de novo.";
+    }
   } else await bootstrapNacional();
-  if (store.backend !== "gas" && cached?.id) {
+  if (!srv() && cached?.id) {
     session.user = { id: cached.id, kind: cached.kind };
     session.eventId = cached.eventId || null;
     session.tab = cached.tab || null;
