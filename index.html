@@ -1115,6 +1115,20 @@ tr.nv-out td{background:var(--sys-warning-container)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .msym.spin{animation:spin 1s linear infinite}
 .app-version{position:fixed;right:10px;bottom:6px;z-index:70;font:500 10px/1 "Roboto Mono",monospace;color:var(--sys-on-surface-variant);opacity:.7;pointer-events:none}
+.tnum .tnow{display:block;width:max-content;font-family:inherit;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;margin-top:3px;padding:1px 6px;border-radius:999px}
+.tnum .tnow.agora{background:var(--sys-success-container);color:var(--sys-on-success-container)}
+.tnum .tnow.proxima{background:var(--sys-warning-container);color:var(--sys-on-warning-container)}
+.team-row:has(.tnow.agora){box-shadow:inset 3px 0 0 var(--sys-primary)}
+.cr-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:var(--sp-md)}
+.cr-chips .chip{cursor:pointer;border:none;font:inherit}
+.cr-geral{display:flex;flex-wrap:wrap;gap:6px}
+.cr-fila{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.cr-fila li{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 12px;border:1px solid var(--sys-outline-variant);border-radius:12px}
+.cr-fila .cr-h{min-width:96px;font-weight:600}
+.cr-fila .cr-t{flex:1;min-width:0}
+.cr-fila li.cr-agora{border-color:var(--sys-primary);background:var(--sys-primary-container)}
+.cr-fila li.cr-passou{opacity:.55}
+@media (max-width:600px){.cr-fila li{flex-wrap:wrap;row-gap:2px}.cr-fila .cr-h{min-width:0;width:100%}}
 </style>
 
 <div id="app" role="main"></div>
@@ -1183,7 +1197,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "3.0.0";
+const APP_VERSION = "3.2.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1815,6 +1829,7 @@ const FB = {
           ops.push((b) => b.set(db.doc("acessos_idx/v-" + cpf), { acesso: h, gen }));
         } else ops.push((b) => b.set(db.doc("acessos/" + h), { kind: "vol", cpf, name: doc.name, email: this.email("vol", cpf, cur.gen || 1) }));
       } else if (!cur) doc.hasLogin = false;
+      else if (cur.acesso) ops.push((b) => b.set(db.doc("acessos/" + cur.acesso), { name: doc.name }, { merge: true }));
       ops.push((b) => b.set(db.doc("pessoas/" + cpf), doc, { merge: true }));
     }
     progresso && progresso(0, ops.length);
@@ -1847,6 +1862,21 @@ const FB = {
     await this.lotes(ops);
     await this.loadBase();
     await this.publicarNomes();
+  },
+  /* exclui da base: kind "vol" (ids = CPFs) ou "team" (ids = baseId). A pessoa/equipe deixa de conseguir entrar. */
+  async excluirBase(kind, ids) {
+    const db = this.db, ops = [];
+    const pre = kind === "vol" ? "v-" : "t-";
+    const idx = await this._idx(pre);
+    ids.forEach((id) => {
+      const cur = idx[pre + id];
+      if (cur?.acesso) ops.push((b) => b.delete(db.doc("acessos/" + cur.acesso)));
+      ops.push((b) => b.delete(db.doc("acessos_idx/" + pre + id)));
+      ops.push((b) => b.delete(db.doc((kind === "vol" ? "pessoas/" : "base_equipes/") + id)));
+    });
+    await this.lotes(ops);
+    await this.loadBase();
+    if (kind === "team") await this.publicarNomes();
   },
   async _idx(pre) {
     const s = await this.db.collection("acessos_idx").get();
@@ -2588,6 +2618,7 @@ function changeMyPassword() {
 function navTabs() {
   const t = [];
   if (can.judge()) t.push({ id: "avaliar", icon: "rate_review", label: "Avaliar" });
+  if (cronoCfg() && (can.nac() || myRoles().length)) t.push({ id: "cronograma", icon: "schedule", label: "Cronograma" });
   if (can.evalOrg()) t.push({ id: "painel", icon: "dashboard", label: "Painel" }, { id: "delib", icon: "gavel", label: "Deliberação" }, { id: "nivel", icon: "balance", label: "Nivelamento" });
   if (can.people()) t.push({ id: "voluntarios", icon: "badge", label: "Voluntários" }, { id: "equipes", icon: "groups", label: "Equipes" }, { id: "salas", icon: "meeting_room", label: "Salas" });
   return t;
@@ -2648,6 +2679,7 @@ function viewApp() {
   if (tab === "voluntarios") return renderPeople(root);
   if (tab === "equipes") return renderTeamsAdmin(root);
   if (tab === "salas") return renderRooms(root);
+  if (tab === "cronograma") return renderCrono(root);
 }
 
 /* ============================================================
@@ -2695,12 +2727,150 @@ function eventEyebrow() {
 const byName = (a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" });
 
 /* ============================================================
+   8.1b CRONOGRAMA — lido ao vivo do site "Onde devo estar".
+   Os horários se mudam só lá; aqui o sistema acompanha.
+   Estações cujo nome começa com "Sala" ou "Pit" são salas de
+   avaliação: a sala do sistema com o mesmo nome recebe as
+   equipes e a ordem/horário daquela estação.
+   ============================================================ */
+const CRONO_PADRAO = "https://jonatanalan1.github.io/Evento/";
+const crono = { porUrl: {}, carregando: {}, memo: {} };
+function cronoCfg(ev = currentEvent()) { return ev?.schedule?.url ? ev.schedule : null; }
+function cronoCache(url) {
+  if (crono.porUrl[url]) return crono.porUrl[url];
+  try { const c = JSON.parse(localStorage.getItem("explore.crono:" + url) || "null"); if (c) crono.porUrl[url] = c; return c; } catch (e) { return null; }
+}
+async function carregarCrono(url) {
+  if (crono.carregando[url]) return crono.carregando[url];
+  crono.carregando[url] = (async () => {
+    try {
+      const html = await (await fetch(url + (url.includes("?") ? "&" : "?") + "t=" + Date.now(), { cache: "no-store" })).text();
+      const m = html.match(/const DATA\s*=\s*(\{[\s\S]*?\});\s*\n/);
+      if (!m) throw new Error("não achei os horários nessa página");
+      const c = { data: JSON.parse(m[1]), at: nowISO() };
+      crono.porUrl[url] = c;
+      crono.memo = {};
+      try { localStorage.setItem("explore.crono:" + url, JSON.stringify(c)); } catch (e) { /* sem espaço: segue só na memória */ }
+      return c;
+    } finally { delete crono.carregando[url]; }
+  })();
+  return crono.carregando[url];
+}
+/* a categoria do evento dentro do cronograma (ex.: explore) */
+function cronoDados(ev = currentEvent()) {
+  const cfg = cronoCfg(ev);
+  if (!cfg) return null;
+  const c = cronoCache(cfg.url);
+  if (!c) {
+    if (!crono.carregando[cfg.url]) carregarCrono(cfg.url).then(() => { if (!ui.flushRubric) render(); }).catch((e) => console.warn("cronograma", e));
+    return null;
+  }
+  const d = c.data || {};
+  const key = cfg.cat && d[cfg.cat] ? cfg.cat : Object.keys(d).find((k) => /explore/i.test(k + " " + (d[k].label || ""))) || Object.keys(d)[0];
+  return d[key] ? { ...d[key], key, at: c.at } : null;
+}
+/* estações de avaliação, cada uma com a fila do dia em ordem de horário */
+function cronoEstacoes(ev = currentEvent()) {
+  const d = ev && cronoDados(ev);
+  if (!d) return null;
+  const k = ev.id + "|" + d.at;
+  if (crono.memo[k]) return crono.memo[k];
+  return (crono.memo[k] = Object.entries(d.stations || {}).filter(([n]) => /^(sala|pit)\b/i.test(n.trim()))
+    .map(([name, rows]) => ({ name, rows: (rows || []).filter((r) => r.team_name).slice().sort((a, b) => (a.start || "").localeCompare(b.start || "")) }))
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { numeric: true })));
+}
+const estacaoDaSala = (est, r) => (est && r ? est.find((s) => norm(s.name) === norm(r.name)) : null);
+/* salas de uma equipe: pelo cronograma (quando o evento tem) ou pela sala marcada à mão */
+function teamRoomIds(t) {
+  const ev = store.get("events", t.eventId);
+  const est = ev && cronoEstacoes(ev);
+  if (est) {
+    const ids = roomsOf(ev.id).filter((r) => estacaoDaSala(est, r)?.rows.some((x) => norm(x.team_name) === norm(t.name))).map((r) => r.id);
+    if (ids.length) return ids;
+  }
+  return t.roomId ? [t.roomId] : [];
+}
+/* horário da equipe numa sala ({start, end, notes_end}) */
+function slotNaSala(t, roomId) {
+  const ev = store.get("events", t.eventId);
+  const s = estacaoDaSala(ev && cronoEstacoes(ev), store.get("rooms", roomId));
+  return s ? s.rows.find((x) => norm(x.team_name) === norm(t.name)) || null : null;
+}
+const agoraHM = () => { const d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+function hojeEhEvento(ev = currentEvent()) {
+  const d = new Date();
+  return !!ev && ev.date === `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+/* "agora" / "próxima" numa fila ordenada por horário (só no dia do evento) */
+function marcaFila(rows, getSlot) {
+  if (!hojeEhEvento()) return new Map();
+  const n = agoraHM(), m = new Map();
+  const agora = rows.find((r) => { const s = getSlot(r); return s && s.start <= n && n < (s.notes_end || s.end); });
+  const prox = rows.find((r) => { const s = getSlot(r); return s && s.start > n; });
+  if (agora) m.set(agora, "agora");
+  if (prox) m.set(prox, "proxima");
+  return m;
+}
+const slotTxt = (s) => (s ? `${s.start}–${s.end}` : "");
+
+/* ---------- aba Cronograma (voluntários do evento) ---------- */
+function renderCrono(root) {
+  const ev = currentEvent();
+  const cfg = cronoCfg(ev);
+  const d = cronoDados(ev);
+  const est = cronoEstacoes(ev) || [];
+  const myRoom = judgeRoomId(session.user);
+  const minha = estacaoDaSala(est, store.get("rooms", myRoom));
+  if (!ui.cronoSt || !est.some((s) => s.name === ui.cronoSt)) ui.cronoSt = minha?.name || est[0]?.name || "";
+  const st = est.find((s) => s.name === ui.cronoSt);
+  const n = agoraHM(), hoje = hojeEhEvento(ev);
+  const geral = (d?.master || []).flatMap((m) => (m.calls || []).filter((c) => c.all).map((c) => ({ time: m.time, ...c })));
+  root.innerHTML = `
+    <div class="page-head">
+      <div class="grow">
+        <div class="eyebrow">${eventEyebrow()}</div>
+        <h1>Cronograma</h1>
+        <p class="muted small">${d ? `Atualizado ${fmtDT(d.at)}. Os horários vêm do site do cronograma: mudou lá, muda aqui.` : cfg ? "Carregando o cronograma…" : "Este evento ainda não tem cronograma ligado."}</p>
+      </div>
+      <div class="row g-2xs wrap no-print">
+        ${cfg ? `<a class="btn btn-out" href="${attr(cfg.url)}" target="_blank" rel="noopener"><span class="msym">open_in_new</span>Onde devo estar</a>
+        <button class="btn btn-tonal" id="cr-upd"><span class="msym">sync</span>Atualizar</button>` : ""}
+      </div>
+    </div>
+    ${!d ? `<div class="card">${emptyBox("schedule", cfg ? "Carregando…" : "Sem cronograma", cfg ? "Se demorar, confira a internet e clique em Atualizar." : "A Operação Nacional liga o cronograma em Editar evento.")}</div>` : `
+    ${geral.length ? `<div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Para todos</h2></div>
+      <div class="cr-geral">${geral.map((g) => `<span class="chip ${hoje && g.time <= n && n < (g.end || g.time) ? "chip-prim" : "chip-out"}"><b class="mono">${esc(g.time)}${g.end ? "–" + esc(g.end) : ""}</b>&nbsp;${esc(g.title)}${g.loc ? " · " + esc(g.loc) : ""}</span>`).join("")}</div></div>` : ""}
+    <div class="card">
+      <div class="sec-title"><h2>Filas de avaliação</h2>${minha ? `<span class="chip chip-prim"><span class="msym">meeting_room</span>A sua: ${esc(minha.name)}</span>` : ""}</div>
+      <div class="cr-chips" role="tablist">${est.map((s) => `<button class="chip ${s.name === ui.cronoSt ? "chip-prim" : "chip-out"}" data-cr="${attr(s.name)}" aria-pressed="${s.name === ui.cronoSt}">${esc(s.name)}</button>`).join("")}</div>
+      ${st ? `<ol class="cr-fila">${(() => {
+        const marca = marcaFila(st.rows, (r) => r);
+        return st.rows.map((r) => {
+          const tag = marca.get(r);
+          const passou = hoje && (r.notes_end || r.end) <= n;
+          return `<li class="${tag ? "cr-" + tag : ""} ${passou ? "cr-passou" : ""}">
+            <span class="mono cr-h">${esc(r.start)}–${esc(r.end)}</span>
+            <span class="cr-t"><b>${esc(r.team_name)}</b>${r.team_id ? ` <span class="small muted">nº ${esc(r.team_id)}</span>` : ""}${r.notes_end ? `<span class="small muted"> · anotações até ${esc(r.notes_end)}</span>` : ""}</span>
+            ${tag ? `<span class="chip ${tag === "agora" ? "chip-ok" : "chip-warn"}">${tag === "agora" ? "Agora" : "Próxima"}</span>` : ""}
+          </li>`;
+        }).join("");
+      })()}</ol>` : ""}
+    </div>`}`;
+  $("#cr-upd")?.addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
+    try { await carregarCrono(cfg.url); toast("Cronograma atualizado."); } catch (err) { toast("Não consegui ler o cronograma: " + String(err.message || err).slice(0, 80), "err"); }
+    render();
+  });
+  $$("[data-cr]").forEach((b) => b.addEventListener("click", () => { ui.cronoSt = b.dataset.cr; render(); }));
+}
+
+/* ============================================================
    8.2 AVALIADOR — lista de equipes
    ============================================================ */
 const ui = { filter: "todas", q: "", silent: false, listScroll: 0, flushRubric: null, orgTab: "equipes", orgFilter: "todas", orgQ: "", teamEval: 0, orgSort: {}, peopleQ: "", teamsQ: "", delibTab: "class", delibSort: { key: "rank", dir: -1 } };
 
 /* avaliador vê só a própria sala; Líder de Avaliação e Nacional veem todas */
-function judgeSees(t) { return can.evalOrg() || (!!judgeRoomId(session.user) && t.roomId === judgeRoomId(session.user)); }
+function judgeSees(t) { return can.evalOrg() || (!!judgeRoomId(session.user) && teamRoomIds(t).includes(judgeRoomId(session.user))); }
 function renderJudgeHome(root) {
   const myRoom = judgeRoomId(session.user);
   if (!can.evalOrg() && !myRoom) {
@@ -2708,10 +2878,11 @@ function renderJudgeHome(root) {
       <div class="card">${emptyBox("meeting_room", "Você ainda não está em uma sala", "Assim que a organização colocar você em uma sala, as equipes dela aparecem aqui.")}</div>`;
     return;
   }
-  const rows = ACCESS.teams.filter(judgeSees).sort(byName).map((t) => {
+  const rows = ACCESS.teams.filter(judgeSees).map((t) => {
     const e = myEval(t.id);
-    return { t, e, st: evalStatus(e), others: evalsOfTeam(t.id).filter((x) => x.judgeId !== session.user.id && x.status === "sent").length };
-  });
+    return { t, e, st: evalStatus(e), slot: myRoom ? slotNaSala(t, myRoom) : null, others: evalsOfTeam(t.id).filter((x) => x.judgeId !== session.user.id && x.status === "sent").length };
+  }).sort((a, b) => (a.slot && b.slot ? a.slot.start.localeCompare(b.slot.start) : a.slot ? -1 : b.slot ? 1 : 0) || byName(a.t, b.t));
+  const marca = marcaFila(rows.filter((r) => r.slot), (r) => r.slot);
   const count = (fn) => rows.filter(fn).length;
   const nSent = count((r) => r.st === "sent");
   const nDraft = count((r) => r.st === "draft" || r.st === "reopened");
@@ -2763,16 +2934,18 @@ function renderJudgeHome(root) {
     $("#team-rows").innerHTML = shown.length === 0
       ? emptyBox(rows.length ? "search_off" : "groups", rows.length ? "Nenhuma equipe aqui" : "Nenhuma equipe cadastrada",
           rows.length ? "Troque o filtro ou a busca." : "A organização precisa colar a lista de equipes no sistema.")
-      : `<ul class="team-list">${shown.map(({ t, e, st, others }) => {
+      : `<ul class="team-list">${shown.map((row) => {
+          const { t, e, st, others, slot } = row;
+          const tag = marca.get(row);
           const n = filledCount(e);
           const edit = canEdit(e);
           const act = st === "pending" ? ["play_arrow", "Avaliar", "btn-fill"]
             : edit ? ["edit", "Continuar", "btn-tonal"] : ["visibility", "Ver", "btn-out"];
           return `<li class="team-row" data-open="${attr(t.id)}" tabindex="0" role="button" aria-label="${attr(act[1] + " " + t.name)}">
-            <span class="tnum mono">${esc(t.number || "—")}</span>
+            <span class="tnum mono">${slot ? esc(slot.start) : esc(t.number || "—")}${tag ? `<span class="tnow ${tag}">${tag === "agora" ? "Agora" : "Próxima"}</span>` : ""}</span>
             <div class="tinfo">
               <b>${esc(t.name)}</b>
-              <span class="small muted">${esc([t.school, t.city].filter(Boolean).join(" · ") || " ")}</span>
+              <span class="small muted">${esc([slot && slotTxt(slot), t.school, t.city].filter(Boolean).join(" · ") || " ")}</span>
             </div>
             <div class="tprog">
               <div class="progress" aria-hidden="true"><i style="width:${(n / ALL_CRITS.length) * 100}%"></i></div>
@@ -4084,6 +4257,10 @@ function eventFormModal(ev) {
         <div class="field"><label for="ev-date">Data <span class="req">*</span></label><input id="ev-date" type="date" value="${attr(ev?.date || "")}"></div>
         <div class="field"><label for="ev-city">Cidade</label><input id="ev-city" type="text" value="${attr(ev?.city || "")}"></div>
         <div class="field"><label for="ev-state">UF</label><input id="ev-state" type="text" maxlength="2" value="${attr(ev?.state || "")}" style="text-transform:uppercase"></div>
+        <div class="field full"><label for="ev-crono">Cronograma ("Onde devo estar")</label>
+          <div class="row g-2xs"><input id="ev-crono" type="url" style="flex:1" value="${attr(ev?.schedule?.url || "")}" placeholder="${CRONO_PADRAO}">
+          <input id="ev-crono-cat" type="text" style="width:120px" value="${attr(ev?.schedule?.cat || "explore")}" title="Categoria dentro do cronograma" aria-label="Categoria"></div>
+          <span class="hint">Opcional. Com o link, as salas recebem as equipes e os horários do cronograma, e os voluntários ganham a aba Cronograma. Mude os horários só no site do cronograma.</span></div>
       </div>
       ${isNew ? `<p class="small muted" style="margin-top:var(--sp-md)">Depois de criar, você entra no evento para vincular o Operador Regional, os voluntários e as equipes.</p>` : ""}`,
     footer: `<button class="btn btn-text" data-close>Cancelar</button>
@@ -4106,6 +4283,7 @@ function eventFormModal(ev) {
         const saved = await store.put("events", {
           ...(ev || {}), id: ev?.id || uid("ev"), name, type: t, date,
           city: $("#ev-city", el).value.trim(), state: $("#ev-state", el).value.trim().toUpperCase(),
+          schedule: $("#ev-crono", el).value.trim() ? { url: $("#ev-crono", el).value.trim(), cat: $("#ev-crono-cat", el).value.trim() || "explore" } : null,
           createdAt: ev?.createdAt || nowISO(),
         });
         await store.audit(saved.id, isNew ? "Evento criado" : "Evento editado", saved.name);
@@ -4597,7 +4775,7 @@ function renderTeamsAdmin(root) {
           return `<tr>
             <td class="mono small">${esc(t.number || "—")}</td>
             <td><b>${esc(t.name)}</b>${t.fromEvent ? `<div class="small muted">veio de ${esc(store.get("events", t.fromEvent)?.name || "regional")}</div>` : ""}</td>
-            <td class="small nowrap">${esc(roomName(t.roomId) || "—")}</td>
+            <td class="small nowrap">${esc(teamRoomIds(t).map(roomName).join(", ") || "—")}</td>
             <td class="small">${esc(t.school || "—")}</td><td class="small">${esc(t.city || "—")}</td><td class="small">${esc(t.coach || "—")}</td>
             <td class="num mono">${n}</td>
             <td><div class="row g-2xs" style="justify-content:flex-end">
@@ -4953,7 +5131,7 @@ function renderNivel(root) {
       ${team ? `<div class="card nv-chart">${chart.html}<p class="small muted lc-cap">Uma linha por avaliador; a linha escura é a média da equipe com as avaliações marcadas; a tracejada é a média do evento. Desmarque uma avaliação para ver a equipe sem ela.</p></div>
       ${simulationPanel(team, tEvals, st)}` : `<div class="card">${emptyBox("groups", "Nenhuma equipe com avaliação enviada", "")}</div>`}`;
   } else {
-    const rooms = roomsOf().map((r) => ({ r, evals: sent.filter((e) => store.get("teams", e.teamId)?.roomId === r.id) })).filter((x) => x.evals.length);
+    const rooms = roomsOf().map((r) => ({ r, evals: sent.filter((e) => judgeRoomId(store.get("users", e.judgeId)) === r.id) })).filter((x) => x.evals.length);
     if (st.sel.sala === null) st.sel.sala = rooms.slice(0, NV_MAX).map((x) => x.r.id);
     const sel = rooms.filter((x) => st.sel.sala.includes(x.r.id));
     const evMean = avg(sent.map(evalMean));
@@ -5122,14 +5300,20 @@ function renderRooms(root) {
   const valid = new Set(rooms.map((r) => r.id));
   const jRoom = (u) => (valid.has(judgeRoomId(u, ev.id)) ? judgeRoomId(u, ev.id) : "");
   const tRoom = (t) => (valid.has(t.roomId) ? t.roomId : "");
-  const noJ = judges.filter((u) => !jRoom(u)), noT = teams.filter((t) => !tRoom(t));
+  /* com cronograma, as equipes (e o horário) de cada sala vêm de lá */
+  const est = cronoEstacoes(ev);
+  const naSala = (t, rid) => (est ? teamRoomIds(t).includes(rid) : tRoom(t) === rid);
+  const faltam = est ? est.filter((s) => !rooms.some((r) => norm(r.name) === norm(s.name))) : [];
+  const noJ = judges.filter((u) => !jRoom(u)), noT = teams.filter((t) => (est ? !teamRoomIds(t).length : !tRoom(t)));
   const sentOf = (t) => evalsOfTeam(t.id).filter((e) => e.status === "sent").length;
 
   const chip = (kind, id, label, sub) => `<span class="rm-chip ${kind}" draggable="true" data-drag="${kind}:${attr(id)}" title="Arraste para outra sala">
     <span class="msym sm">${kind === "j" ? "person" : "groups"}</span><span class="nm">${esc(label)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ""}
     <button class="rm-x" data-unassign="${kind}:${attr(id)}" aria-label="Tirar da sala"><span class="msym sm">close</span></button></span>`;
   const card = (r) => {
-    const rj = judges.filter((u) => jRoom(u) === r.id), rt = teams.filter((t) => tRoom(t) === r.id);
+    const rj = judges.filter((u) => jRoom(u) === r.id);
+    const rt = teams.filter((t) => naSala(t, r.id)).map((t) => ({ t, s: est ? slotNaSala(t, r.id) : null }))
+      .sort((a, b) => (a.s?.start || "99").localeCompare(b.s?.start || "99") || byName(a.t, b.t)).map((x) => x.t);
     const exp = rj.length * rt.length, done = rt.reduce((a, t) => a + evalsOfTeam(t.id).filter((e) => e.status === "sent" && rj.some((u) => u.id === e.judgeId)).length, 0);
     return `<section class="rm-card" data-drop="${attr(r.id)}">
       <header>
@@ -5144,9 +5328,11 @@ function renderRooms(root) {
         <select class="rm-add" data-addj="${attr(r.id)}"><option value="">+ Adicionar avaliador</option>
           ${judges.filter((u) => jRoom(u) !== r.id).map((u) => `<option value="${attr(u.id)}">${esc(u.name)}${jRoom(u) ? ` (${esc(roomName(jRoom(u)))})` : ""}</option>`).join("")}</select></div>
       <div class="rm-sec"><div class="rm-sec-t">Equipes</div>
-        <div class="rm-list">${rt.map((t) => chip("t", t.id, t.name, t.number ? "nº " + t.number : "")).join("") || `<span class="small muted">Nenhuma</span>`}</div>
-        <select class="rm-add" data-addt="${attr(r.id)}"><option value="">+ Adicionar equipe</option>
-          ${teams.filter((t) => tRoom(t) !== r.id).map((t) => `<option value="${attr(t.id)}">${esc(t.name)}${tRoom(t) ? ` (${esc(roomName(tRoom(t)))})` : ""}</option>`).join("")}</select></div>
+        <div class="rm-list">${rt.map((t) => est
+          ? `<span class="rm-chip t"><span class="msym sm">schedule</span><span class="nm">${esc(t.name)}</span><span class="sub">${esc(slotNaSala(t, r.id)?.start || "")}</span></span>`
+          : chip("t", t.id, t.name, t.number ? "nº " + t.number : "")).join("") || `<span class="small muted">${est ? "Nenhuma no cronograma" : "Nenhuma"}</span>`}</div>
+        ${est ? "" : `<select class="rm-add" data-addt="${attr(r.id)}"><option value="">+ Adicionar equipe</option>
+          ${teams.filter((t) => tRoom(t) !== r.id).map((t) => `<option value="${attr(t.id)}">${esc(t.name)}${tRoom(t) ? ` (${esc(roomName(tRoom(t)))})` : ""}</option>`).join("")}</select>`}</div>
     </section>`;
   };
 
@@ -5159,10 +5345,12 @@ function renderRooms(root) {
         <p class="muted small">Cada sala tem os seus avaliadores e as suas equipes. O avaliador só vê as equipes da sala dele; o Líder de Avaliação vê todas. Arraste para mudar de sala.</p>
       </div>
       <div class="row g-2xs wrap no-print">
-        <button class="btn btn-out" id="rm-dist"><span class="msym">shuffle</span>Distribuir equipes</button>
-        <button class="btn btn-fill" id="rm-new"><span class="msym">add</span>Nova sala</button>
+        ${est ? (faltam.length ? `<button class="btn btn-fill" id="rm-crono"><span class="msym">schedule</span>Criar as ${faltam.length} salas do cronograma</button>` : "")
+              : `<button class="btn btn-out" id="rm-dist"><span class="msym">shuffle</span>Distribuir equipes</button>`}
+        <button class="btn ${est && faltam.length ? "btn-out" : "btn-fill"}" id="rm-new"><span class="msym">add</span>Nova sala</button>
       </div>
     </div>
+    ${est ? `<div class="banner info" style="margin-bottom:var(--sp-lg)"><span class="msym">schedule</span><div>As <b>equipes e os horários</b> de cada sala vêm do <a href="${attr(cronoCfg(ev).url)}" target="_blank" rel="noopener">cronograma</a> (salas com o mesmo nome das estações: ${est.map((x) => esc(x.name)).join(", ")}). Aqui você só coloca os <b>avaliadores</b>.${faltam.length ? ` Faltam ${faltam.length} sala(s): use o botão acima.` : ""}</div></div>` : ""}
     <div class="kpi-grid kpi-4" style="margin-bottom:var(--sp-lg)">
       <div class="kpi"><span class="k">Salas</span><span class="v">${rooms.length}</span><span class="sub">neste evento</span></div>
       <div class="kpi"><span class="k">Avaliadores</span><span class="v">${judges.length}</span><span class="sub">${judges.length && rooms.length ? `~${fmt(judges.length / rooms.length, 1)} por sala` : "—"}</span></div>
@@ -5190,7 +5378,16 @@ function renderRooms(root) {
     await store.audit(ev.id, "Sala criada", name);
     render();
   });
-  $("#rm-dist").addEventListener("click", () => distributeTeamsModal(rooms, teams, tRoom));
+  $("#rm-dist")?.addEventListener("click", () => distributeTeamsModal(rooms, teams, tRoom));
+  $("#rm-crono")?.addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
+    ui.silent = true;
+    for (const [i, x] of faltam.entries()) await store.put("rooms", { id: uid("rm"), eventId: ev.id, name: x.name, order: rooms.length + i, createdAt: nowISO() });
+    ui.silent = false;
+    await store.audit(ev.id, "Salas criadas do cronograma", faltam.map((x) => x.name).join(", "));
+    toast(`${faltam.length} sala(s) criada(s).`);
+    render();
+  });
   $$("[data-rename]").forEach((i) => i.addEventListener("change", async () => {
     const r = store.get("rooms", i.dataset.rename);
     const name = i.value.trim();
@@ -5290,7 +5487,10 @@ function bindBaseSection() {
 function baseListModal(kind) {
   if (!store.base) return baseNotLoaded();
   const vol = kind === "vol";
+  const idOf = (x) => (vol ? x.cpf : x.baseId);
+  const achar = (id) => (vol ? store.base.volunteers : store.base.teams).find((x) => idOf(x) === id);
   let q = "";
+  const marcados = new Set();
   openModal({
     title: vol ? "Voluntários da base" : "Equipes da base", icon: vol ? "badge" : "groups", size: "wide",
     body: `
@@ -5299,86 +5499,132 @@ function baseListModal(kind) {
         <button type="button" class="btn btn-out btn-sm" id="bl-add"><span class="msym sm">add</span>Adicionar</button>
         <button type="button" class="btn btn-text btn-sm" id="bl-csv"><span class="msym sm">download</span>Exportar</button>
       </div>
+      <div class="row g-sm wrap small" style="margin-bottom:var(--sp-xs)">
+        <label class="check"><input type="checkbox" id="bl-all"> Marcar as visíveis</label>
+        <button type="button" class="btn btn-danger-out btn-sm" id="bl-del" disabled><span class="msym sm">delete</span>Excluir marcadas</button>
+        <button type="button" class="btn btn-text btn-sm right" id="bl-delall" style="color:var(--sys-critical)"><span class="msym sm">delete_sweep</span>Excluir ${vol ? "todos" : "todas"}</button>
+      </div>
       <div class="bp-list" id="bl-list"></div>`,
     footer: `<span class="small muted" id="bl-count"></span><button class="btn btn-text right" data-close>Fechar</button>`,
-    onMount: (el, close) => {
+    onMount: (el) => {
+      let visiveis = [];
+      const upd = () => {
+        const b = $("#bl-del", el);
+        b.disabled = !marcados.size;
+        b.innerHTML = `<span class="msym sm">delete</span>Excluir marcadas${marcados.size ? ` (${marcados.size})` : ""}`;
+      };
       const draw = () => {
         const nq = norm(q), qd = onlyDigits(q);
         const all = (vol ? store.base.volunteers : store.base.teams).slice().sort(byName);
-        const list = all.filter((x) => !nq || (vol
+        [...marcados].forEach((id) => { if (!achar(id)) marcados.delete(id); });
+        visiveis = all.filter((x) => !nq || (vol
           ? norm(x.name).includes(nq) || norm(x.city).includes(nq) || (qd.length >= 3 && x.cpf.includes(qd))
           : [x.name, x.code, x.school, x.city].some((v) => norm(v).includes(nq))));
-        $("#bl-count", el).textContent = `${list.length} de ${all.length}`;
-        $("#bl-list", el).innerHTML = !list.length ? `<p class="small muted" style="padding:var(--sp-md)">${all.length ? "Ninguém com essa busca." : "A base está vazia. Use Importar ou Adicionar."}</p>`
-          : list.slice(0, 300).map((x) => `<div class="bp-row">
+        $("#bl-count", el).textContent = `${visiveis.length} de ${all.length}`;
+        $("#bl-all", el).checked = visiveis.length > 0 && visiveis.every((x) => marcados.has(idOf(x)));
+        $("#bl-list", el).innerHTML = !visiveis.length ? `<p class="small muted" style="padding:var(--sp-md)">${all.length ? "Ninguém com essa busca." : "A base está vazia. Use Importar ou Adicionar."}</p>`
+          : visiveis.slice(0, 300).map((x) => `<label class="bp-row">
+              <input type="checkbox" data-bl-sel="${attr(idOf(x))}" ${marcados.has(idOf(x)) ? "checked" : ""}>
               <span class="bp-main"><b>${esc(x.name)}</b><span class="small muted">${vol
                 ? `${fmtCPF(x.cpf)} · ${esc([x.city, x.uf].filter(Boolean).join("/"))}`
                 : esc([x.code, x.school, [x.city, x.state].filter(Boolean).join("/")].filter(Boolean).join(" · "))}</span></span>
               <span class="bp-meta small">${x.hasLogin === false ? `<span class="chip chip-warn">sem senha</span>` : ""}
-                <button class="btn btn-text btn-sm" data-bl-pw="${attr(vol ? x.cpf : x.baseId)}"><span class="msym sm">key</span>${x.hasLogin === false ? "Definir senha" : "Nova senha"}</button></span>
-            </div>`).join("") + (list.length > 300 ? `<p class="small muted" style="padding:var(--sp-sm)">Mostrando 300 de ${list.length}. Use a busca.</p>` : "");
-        $$("[data-bl-pw]", el).forEach((b) => b.addEventListener("click", () => {
-          const x = vol ? store.base.volunteers.find((v) => v.cpf === b.dataset.blPw) : store.base.teams.find((t) => t.baseId === b.dataset.blPw);
-          baseFormModal(kind, x, draw);
-        }));
+                <button type="button" class="btn btn-text btn-sm" data-bl-edit="${attr(idOf(x))}"><span class="msym sm">edit</span>Editar</button>
+                <button type="button" class="icon-btn sm" data-bl-rm="${attr(idOf(x))}" title="Excluir"><span class="msym sm">delete</span></button></span>
+            </label>`).join("") + (visiveis.length > 300 ? `<p class="small muted" style="padding:var(--sp-sm)">Mostrando 300 de ${visiveis.length}. Use a busca.</p>` : "");
+        $$("[data-bl-sel]", el).forEach((c) => c.addEventListener("change", () => { c.checked ? marcados.add(c.dataset.blSel) : marcados.delete(c.dataset.blSel); upd(); }));
+        $$("[data-bl-edit]", el).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); baseFormModal(kind, achar(b.dataset.blEdit), draw); }));
+        $$("[data-bl-rm]", el).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); baseExcluir(kind, [b.dataset.blRm], draw); }));
+        upd();
       };
       draw();
       $("#bl-q", el).addEventListener("input", (e) => { q = e.target.value; draw(); });
+      $("#bl-all", el).addEventListener("change", (e) => { visiveis.forEach((x) => (e.target.checked ? marcados.add(idOf(x)) : marcados.delete(idOf(x)))); draw(); });
+      $("#bl-del", el).addEventListener("click", () => baseExcluir(kind, [...marcados], draw));
+      $("#bl-delall", el).addEventListener("click", () => baseExcluir(kind, (vol ? store.base.volunteers : store.base.teams).map(idOf), draw, true));
       $("#bl-add", el).addEventListener("click", () => baseFormModal(kind, null, draw));
       $("#bl-csv", el).addEventListener("click", () => baseExport(kind));
     },
   });
 }
 
-/* cadastro avulso ou nova senha (x = registro existente) */
+/* exclui da base de cadastro (não mexe nos eventos) */
+async function baseExcluir(kind, ids, after, tudo) {
+  if (!ids.length) return;
+  const vol = kind === "vol";
+  const nomes = ids.map((id) => (vol ? store.base.volunteers.find((v) => v.cpf === id) : store.base.teams.find((t) => t.baseId === id))?.name).filter(Boolean);
+  const emEvento = vol
+    ? ids.filter((cpf) => Object.values(store.get("users", "vol-" + cpf)?.roles || {}).some((r) => (r || []).length)).length
+    : ids.filter((bid) => store.all("teams").some((t) => t.baseId === bid)).length;
+  const alvo = tudo ? `<b>${vol ? "todos os" : "todas as"} ${ids.length} ${vol ? "voluntários" : "equipes"}</b> da base`
+    : ids.length === 1 ? `<b>${esc(nomes[0] || ids[0])}</b>` : `<b>${ids.length} ${vol ? "voluntários" : "equipes"}</b>`;
+  const ok = await confirmModal(tudo ? "Esvaziar a base" : "Excluir da base",
+    `${alvo} ${ids.length === 1 && !tudo ? "sai" : "saem"} da base de cadastro e ${ids.length === 1 && !tudo ? "deixa" : "deixam"} de conseguir entrar no sistema.
+     ${emEvento ? `<br><br><b>Atenção:</b> ${emEvento} ${vol ? "pessoa(s) já está(ão) vinculada(s)" : "equipe(s) já está(ão)"} em eventos. Os eventos não mudam, mas o login para de funcionar até ${vol ? "a pessoa" : "a equipe"} voltar para a base (importando de novo com a senha).` : ""}
+     <br><br>Depois é só importar a planilha de novo.`, tudo ? "Excluir tudo" : "Excluir", true);
+  if (!ok) return;
+  try {
+    await FB.excluirBase(kind, ids);
+    await store.audit(null, vol ? "Voluntários excluídos da base" : "Equipes excluídas da base", tudo ? `todos (${ids.length})` : nomes.slice(0, 5).join(", ") + (nomes.length > 5 ? "…" : ""));
+    toast(`${ids.length} ${vol ? "voluntário(s)" : "equipe(s)"} excluído(s) da base.`);
+    after && after();
+    render();
+  } catch (e) { toast("Não foi possível excluir: " + fbMsg(e), "err"); }
+}
+
+/* cadastro avulso ou edição (x = registro existente; senha em branco = mantém) */
 function baseFormModal(kind, x, after) {
   const vol = kind === "vol";
   const novo = !x;
+  const v = (k) => attr(x?.[k] || "");
   openModal({
-    title: novo ? (vol ? "Adicionar voluntário" : "Adicionar equipe") : `Senha de ${x.name}`, icon: novo ? "person_add" : "key",
+    title: novo ? (vol ? "Adicionar voluntário" : "Adicionar equipe") : `Editar ${x.name}`, icon: novo ? "person_add" : "edit", size: "wide",
     body: `<div class="form-grid">
-      ${novo ? (vol
-        ? `<div class="field full"><label for="bf-name">Nome <span class="req">*</span></label><input id="bf-name" type="text"></div>
-           <div class="field"><label for="bf-cpf">CPF <span class="req">*</span></label><input id="bf-cpf" type="text" inputmode="numeric" maxlength="14" placeholder="000.000.000-00"></div>
-           <div class="field"><label for="bf-city">Cidade</label><input id="bf-city" type="text"></div>
-           <div class="field"><label for="bf-uf">UF</label><input id="bf-uf" type="text" maxlength="2"></div>`
-        : `<div class="field full"><label for="bf-name">Nome da equipe <span class="req">*</span></label><input id="bf-name" type="text"><span class="hint">É o que a equipe escolhe na lista do login.</span></div>
-           <div class="field"><label for="bf-code">Nº / Cód. da equipe</label><input id="bf-code" type="text"></div>
-           <div class="field"><label for="bf-school">Escola / instituição</label><input id="bf-school" type="text"></div>
-           <div class="field"><label for="bf-city">Cidade</label><input id="bf-city" type="text"></div>
-           <div class="field"><label for="bf-uf">UF</label><input id="bf-uf" type="text" maxlength="2"></div>
-           <div class="field full"><label for="bf-coach">Tutor(a)</label><input id="bf-coach" type="text"></div>`)
-        : `<p class="small muted full">${vol ? `CPF ${fmtCPF(x.cpf)}` : esc(x.school || x.code || "")}. A senha antiga deixa de valer assim que você salvar.</p>`}
-      <div class="field full"><label for="bf-pw">${vol ? "Senha" : "Código (senha da equipe)"} <span class="req">*</span></label>
-        <div class="row g-2xs"><input id="bf-pw" type="text" autocomplete="off" style="flex:1"><button type="button" class="btn btn-out btn-sm" id="bf-gen">Gerar</button></div>
-        <span class="hint">Anote e entregue ${vol ? "à pessoa" : "ao tutor"}: o sistema não guarda a senha, só confere.</span></div>
+      ${vol
+        ? `<div class="field full"><label for="bf-name">Nome <span class="req">*</span></label><input id="bf-name" type="text" value="${v("name")}"></div>
+           <div class="field"><label for="bf-cpf">CPF ${novo ? `<span class="req">*</span>` : ""}</label><input id="bf-cpf" type="text" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" value="${novo ? "" : fmtCPF(x.cpf)}" ${novo ? "" : "disabled"}>${novo ? "" : `<span class="hint">O CPF é o login e não muda. Para trocar, exclua e cadastre de novo.</span>`}</div>
+           <div class="field"><label for="bf-city">Cidade</label><input id="bf-city" type="text" value="${v("city")}"></div>
+           <div class="field"><label for="bf-uf">UF</label><input id="bf-uf" type="text" maxlength="2" value="${v("uf")}"></div>
+           <div class="field"><label for="bf-int">Interesse em avaliar (1 a 4)</label><input id="bf-int" type="text" maxlength="1" value="${v("interest")}"></div>`
+        : `<div class="field full"><label for="bf-name">Nome da equipe <span class="req">*</span></label><input id="bf-name" type="text" value="${v("name")}"><span class="hint">É o que a equipe escolhe na lista do login.${novo ? "" : " Se mudar o nome, digite o código de novo."}</span></div>
+           <div class="field"><label for="bf-code">Nº / Cód. da equipe</label><input id="bf-code" type="text" value="${v("code")}"></div>
+           <div class="field"><label for="bf-school">Escola / instituição</label><input id="bf-school" type="text" value="${v("school")}"></div>
+           <div class="field"><label for="bf-city">Cidade</label><input id="bf-city" type="text" value="${v("city")}"></div>
+           <div class="field"><label for="bf-uf">UF</label><input id="bf-uf" type="text" maxlength="2" value="${v("state")}"></div>
+           <div class="field"><label for="bf-mem">Integrantes</label><input id="bf-mem" type="text" value="${v("members")}"></div>
+           <div class="field full"><label for="bf-coach">Tutor(a)</label><input id="bf-coach" type="text" value="${v("coach")}"></div>`}
+      <div class="field full"><label for="bf-pw">${vol ? "Senha" : "Código (senha da equipe)"} ${novo ? `<span class="req">*</span>` : ""}</label>
+        <div class="row g-2xs"><input id="bf-pw" type="text" autocomplete="off" style="flex:1" placeholder="${novo ? "" : "Deixe em branco para manter a atual"}"><button type="button" class="btn btn-out btn-sm" id="bf-gen">Gerar</button></div>
+        <span class="hint">${novo ? `Anote e entregue ${vol ? "à pessoa" : "ao tutor"}: o sistema não guarda a senha, só confere.` : "Só preencha para trocar. A senha antiga deixa de valer assim que você salvar."}</span></div>
     </div>`,
     footer: `<button class="btn btn-text" data-close>Cancelar</button><button class="btn btn-fill" data-ok><span class="msym">save</span>Salvar</button>`,
     onMount: (el, close) => {
       $("#bf-cpf", el)?.addEventListener("input", (e) => { e.target.value = maskCPF(e.target.value); });
       $("#bf-gen", el).addEventListener("click", () => { $("#bf-pw", el).value = randSalt().slice(0, 8).toUpperCase(); });
       const ok = $("[data-ok]", el);
+      const val = (id) => ($(id, el)?.value || "").trim();
       ok.addEventListener("click", async () => {
-        const senha = $("#bf-pw", el).value.trim();
-        if (senha.length < 4) return toast("A senha precisa de pelo menos 4 caracteres.", "err");
+        const senha = val("#bf-pw");
+        if ((novo || senha) && senha.length < 4) return toast("A senha precisa de pelo menos 4 caracteres.", "err");
         let row;
-        if (novo && vol) {
-          row = { cpf: cpfFromCell($("#bf-cpf", el).value), name: $("#bf-name", el).value.trim(), city: $("#bf-city", el).value.trim(), uf: $("#bf-uf", el).value.trim().toUpperCase(), senha };
+        if (vol) {
+          row = { ...(x || {}), cpf: novo ? cpfFromCell(val("#bf-cpf")) : x.cpf, name: val("#bf-name"), city: val("#bf-city"), uf: val("#bf-uf").toUpperCase(), interest: val("#bf-int"), senha };
           if (row.cpf.length !== 11) return toast("Digite os 11 números do CPF.", "err");
           if (!row.name) return toast("Preencha o nome.", "err");
-          if (store.base.volunteers.some((v) => v.cpf === row.cpf)) return toast("Este CPF já está na base. Use Nova senha na lista.", "err");
-        } else if (novo) {
-          row = { name: $("#bf-name", el).value.trim(), code: $("#bf-code", el).value.trim(), school: $("#bf-school", el).value.trim(), city: $("#bf-city", el).value.trim(), state: $("#bf-uf", el).value.trim().toUpperCase(), coach: $("#bf-coach", el).value.trim(), senha };
+          if (novo && store.base.volunteers.some((p) => p.cpf === row.cpf)) return toast("Este CPF já está na base. Use Editar na lista.", "err");
+        } else {
+          row = { ...(x || {}), name: val("#bf-name"), code: val("#bf-code"), school: val("#bf-school"), city: val("#bf-city"), state: val("#bf-uf").toUpperCase(), members: val("#bf-mem"), coach: val("#bf-coach"), senha };
           if (!row.name) return toast("Preencha o nome da equipe.", "err");
-          if (store.base.teams.some((t) => norm(t.name) === norm(row.name))) return toast("Já existe uma equipe com esse nome.", "err");
-        } else row = { ...x, senha };
+          if (store.base.teams.some((t) => norm(t.name) === norm(row.name) && t.baseId !== x?.baseId)) return toast("Já existe uma equipe com esse nome.", "err");
+          if (!novo && norm(row.name) !== norm(x.name) && !senha && x.hasLogin !== false) return toast("Mudou o nome: digite o código da equipe de novo (o login depende do nome).", "err");
+        }
         ok.disabled = true;
         ok.innerHTML = `<span class="msym spin">progress_activity</span>Salvando…`;
         try {
           if (vol) await FB.gravarPessoas([row]); else await FB.gravarEquipes([row]);
-          await store.audit(null, novo ? (vol ? "Voluntário cadastrado na base" : "Equipe cadastrada na base") : "Senha redefinida", row.name);
+          await store.audit(null, novo ? (vol ? "Voluntário cadastrado na base" : "Equipe cadastrada na base") : senha ? "Cadastro e senha alterados na base" : "Cadastro alterado na base", row.name);
           close();
-          toast(novo ? "Cadastrado." : "Senha nova salva.");
+          toast(novo ? "Cadastrado." : "Alterações salvas.");
           after && after();
         } catch (e) {
           toast("Não foi possível salvar: " + fbMsg(e), "err");
