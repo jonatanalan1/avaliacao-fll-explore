@@ -1119,8 +1119,24 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .tnum .tnow.agora{background:var(--sys-success-container);color:var(--sys-on-success-container)}
 .tnum .tnow.proxima{background:var(--sys-warning-container);color:var(--sys-on-warning-container)}
 .team-row:has(.tnow.agora){box-shadow:inset 3px 0 0 var(--sys-primary)}
+.pf-sep{border:none;border-top:1px solid var(--sys-outline-variant);margin:var(--sp-md) 0}
+.pp-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.pp-row{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 0;border-top:1px solid var(--sys-outline-variant)}
+.pp-row:first-child{border-top:none}
+.pp-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.pp-main b{overflow:hidden;text-overflow:ellipsis}
+.wa-btn{flex:none;color:#1a8f4a;border-color:#1a8f4a}
+.sl-room{border-top:1px solid var(--sys-outline-variant)}
+.sl-room:first-of-type{border-top:none}
+.sl-room summary{display:flex;align-items:center;gap:var(--sp-xs);padding:12px 0;cursor:pointer;list-style:none}
+.sl-room summary::-webkit-details-marker{display:none}
+.sl-room[open] .chev{transform:rotate(180deg)}
+.sl-faces{display:flex;margin-left:var(--sp-xs)}
+.sl-faces .avatar{margin-left:-6px;border:2px solid var(--sys-surface)}
+@media (max-width:600px){.hide-sm{display:none}}
 .cr-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:var(--sp-md)}
 .cr-chips .chip{cursor:pointer;border:none;font:inherit}
+.cr-chips .cr-esp{font-weight:600}
 .cr-geral{display:flex;flex-wrap:wrap;gap:6px}
 .cr-fila{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
 .cr-fila li{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 12px;border:1px solid var(--sys-outline-variant);border-radius:12px}
@@ -1197,7 +1213,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "3.2.0";
+const APP_VERSION = "3.3.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1692,6 +1708,7 @@ const FB = {
       return;
     }
     espera.push(this._assina(L, "users", "all", db.collection("users")));
+    espera.push(this._assina(L, "perfis", "all", db.collection("perfis")));
     await Promise.all(espera);
     await this._eventos();
     /* Operação Nacional fixa no código: garante o registro dela */
@@ -1925,7 +1942,7 @@ const LS_KEY = "explore.v2";
 const store = {
   mode: "local",
   db: null,
-  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {} },
+  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {} },
   listeners: new Set(),
   ready: false,
 
@@ -2535,15 +2552,15 @@ function shellBar() {
         <div class="muted" style="font-size:10px">${BRAND_SUB}</div>
       </div>
     </div>
-    ${ev ? `<button class="event-pill" id="switch-ev" ${evs.length > 1 || can.nac() ? "" : "disabled"} title="Trocar de evento">
-        <span class="msym sm">event</span><span class="nm">${esc(ev.name)}</span>${evs.length > 1 || can.nac() ? `<span class="msym sm">unfold_more</span>` : ""}
+    ${ev ? `<button class="event-pill" id="switch-ev" ${evs.length > 1 || can.nac() || u.kind === "vol" ? "" : "disabled"} title="Ver os eventos">
+        <span class="msym sm">event</span><span class="nm">${esc(ev.name)}</span>${evs.length > 1 || can.nac() || u.kind === "vol" ? `<span class="msym sm">unfold_more</span>` : ""}
       </button>` : ""}
     <span class="row g-2xs role-chips">${roles.map((r) => `<span class="chip chip-prim"><span class="msym">${ROLE_ICON[r]}</span>${ROLE_LABEL[r]}</span>`).join("")}</span>
     <div class="right row g-2xs">
       ${backendChip()}
       <button class="icon-btn" id="theme-tog" aria-label="Alternar tema"><span class="msym">contrast</span></button>
       <button class="usr-btn" id="usr-menu" aria-label="Minha conta">
-        <span class="avatar">${esc(initials(u.name))}</span>
+        ${u.kind === "vol" ? avatarHtml(u, 32) : `<span class="avatar">${esc(initials(u.name))}</span>`}
         <span class="msym sm">expand_more</span>
       </button>
     </div>
@@ -2571,19 +2588,21 @@ function bindShellBar() {
       title: "Minha conta", icon: "account_circle",
       body: `
         <div class="row g-sm center">
-          <span class="avatar" style="width:48px;height:48px;font-size:16px">${esc(initials(u.name))}</span>
+          ${u.kind === "vol" ? avatarHtml(u, 48) : `<span class="avatar" style="width:48px;height:48px;font-size:16px">${esc(initials(u.name))}</span>`}
           <div>
             <div style="font-weight:500">${esc(u.name)}</div>
             <div class="small muted">${esc(sub)}</div>
             <div class="small muted">${roles.map((r) => ROLE_LABEL[r]).join(" · ")}</div>
           </div>
-        </div>`,
+        </div>
+        ${perfilBox() ? `<hr class="pf-sep">${perfilBox()}` : ""}`,
       footer: `${u.kind === "vol" && !srv() ? `<button class="btn btn-out" data-pw><span class="msym">key</span>Alterar senha</button>` : ""}
                <button class="btn btn-text right" data-close>Fechar</button>
                <button class="btn btn-danger-out" data-out><span class="msym">logout</span>Sair</button>`,
       onMount: (el, close) => {
         $("[data-out]", el).addEventListener("click", () => { close(); logout(); });
         $("[data-pw]", el)?.addEventListener("click", () => { close(); changeMyPassword(); });
+        bindPerfilBox(el, () => { close(); render(); setTimeout(() => $("#usr-menu")?.click(), 50); });
       },
     });
   });
@@ -2618,6 +2637,7 @@ function changeMyPassword() {
 function navTabs() {
   const t = [];
   if (can.judge()) t.push({ id: "avaliar", icon: "rate_review", label: "Avaliar" });
+  if (can.nac() || myRoles().length) t.push({ id: "sala", icon: "diversity_3", label: "Sala" });
   if (cronoCfg() && (can.nac() || myRoles().length)) t.push({ id: "cronograma", icon: "schedule", label: "Cronograma" });
   if (can.evalOrg()) t.push({ id: "painel", icon: "dashboard", label: "Painel" }, { id: "delib", icon: "gavel", label: "Deliberação" }, { id: "nivel", icon: "balance", label: "Nivelamento" });
   if (can.people()) t.push({ id: "voluntarios", icon: "badge", label: "Voluntários" }, { id: "equipes", icon: "groups", label: "Equipes" }, { id: "salas", icon: "meeting_room", label: "Salas" });
@@ -2680,6 +2700,7 @@ function viewApp() {
   if (tab === "equipes") return renderTeamsAdmin(root);
   if (tab === "salas") return renderRooms(root);
   if (tab === "cronograma") return renderCrono(root);
+  if (tab === "sala") return renderSala(root);
 }
 
 /* ============================================================
@@ -2813,6 +2834,23 @@ function marcaFila(rows, getSlot) {
 }
 const slotTxt = (s) => (s ? `${s.start}–${s.end}` : "");
 
+/* o que está acontecendo agora em cada sala (no dia do evento) */
+function cronoAgora(est, minha) {
+  if (!hojeEhEvento()) return `<div class="banner info"><span class="msym">schedule</span><div>No dia do evento, aqui aparece o que está acontecendo <b>agora</b> em cada sala e quem vem em seguida.</div></div>`;
+  const n = agoraHM();
+  const linhas = est.map((s) => {
+    const agora = s.rows.find((r) => r.start <= n && n < (r.notes_end || r.end));
+    const prox = s.rows.find((r) => r.start > n);
+    const emAval = agora && n < agora.end;
+    return `<li class="${s.name === minha?.name ? "cr-agora" : ""}">
+      <span class="cr-h">${esc(s.name)}</span>
+      <span class="cr-t">${agora ? `<b>${esc(agora.team_name)}</b> <span class="small muted">· ${emAval ? "avaliação até " + esc(agora.end) : "anotações até " + esc(agora.notes_end)}</span>` : `<span class="small muted">Sem equipe agora</span>`}
+        ${prox ? `<br><span class="small muted">Próxima: ${esc(prox.team_name)} às ${esc(prox.start)}</span>` : ""}</span>
+    </li>`;
+  }).join("");
+  return `<p class="small muted" style="margin-bottom:var(--sp-xs)">Agora: <b class="mono">${esc(n)}</b></p><ol class="cr-fila">${linhas}</ol>`;
+}
+
 /* ---------- aba Cronograma (voluntários do evento) ---------- */
 function renderCrono(root) {
   const ev = currentEvent();
@@ -2821,7 +2859,7 @@ function renderCrono(root) {
   const est = cronoEstacoes(ev) || [];
   const myRoom = judgeRoomId(session.user);
   const minha = estacaoDaSala(est, store.get("rooms", myRoom));
-  if (!ui.cronoSt || !est.some((s) => s.name === ui.cronoSt)) ui.cronoSt = minha?.name || est[0]?.name || "";
+  if (!ui.cronoSt || (ui.cronoSt !== "__agora" && !est.some((s) => s.name === ui.cronoSt))) ui.cronoSt = minha?.name || est[0]?.name || "";
   const st = est.find((s) => s.name === ui.cronoSt);
   const n = agoraHM(), hoje = hojeEhEvento(ev);
   const geral = (d?.master || []).flatMap((m) => (m.calls || []).filter((c) => c.all).map((c) => ({ time: m.time, ...c })));
@@ -2830,7 +2868,7 @@ function renderCrono(root) {
       <div class="grow">
         <div class="eyebrow">${eventEyebrow()}</div>
         <h1>Cronograma</h1>
-        <p class="muted small">${d ? `Atualizado ${fmtDT(d.at)}. Os horários vêm do site do cronograma: mudou lá, muda aqui.` : cfg ? "Carregando o cronograma…" : "Este evento ainda não tem cronograma ligado."}</p>
+        ${d ? "" : `<p class="muted small">${cfg ? "Carregando o cronograma…" : "Este evento ainda não tem cronograma ligado."}</p>`}
       </div>
       <div class="row g-2xs wrap no-print">
         ${cfg ? `<a class="btn btn-out" href="${attr(cfg.url)}" target="_blank" rel="noopener"><span class="msym">open_in_new</span>Onde devo estar</a>
@@ -2841,9 +2879,14 @@ function renderCrono(root) {
     ${geral.length ? `<div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Para todos</h2></div>
       <div class="cr-geral">${geral.map((g) => `<span class="chip ${hoje && g.time <= n && n < (g.end || g.time) ? "chip-prim" : "chip-out"}"><b class="mono">${esc(g.time)}${g.end ? "–" + esc(g.end) : ""}</b>&nbsp;${esc(g.title)}${g.loc ? " · " + esc(g.loc) : ""}</span>`).join("")}</div></div>` : ""}
     <div class="card">
-      <div class="sec-title"><h2>Filas de avaliação</h2>${minha ? `<span class="chip chip-prim"><span class="msym">meeting_room</span>A sua: ${esc(minha.name)}</span>` : ""}</div>
-      <div class="cr-chips" role="tablist">${est.map((s) => `<button class="chip ${s.name === ui.cronoSt ? "chip-prim" : "chip-out"}" data-cr="${attr(s.name)}" aria-pressed="${s.name === ui.cronoSt}">${esc(s.name)}</button>`).join("")}</div>
-      ${st ? `<ol class="cr-fila">${(() => {
+      <div class="sec-title"><h2>Filas de avaliação</h2></div>
+      <div class="cr-chips" role="tablist">
+        <button class="chip ${ui.cronoSt === "__agora" ? "chip-prim" : "chip-out"} cr-esp" data-cr="__agora" aria-pressed="${ui.cronoSt === "__agora"}"><span class="msym">radio_button_checked</span>Agora</button>
+        ${minha ? `<button class="chip ${minha.name === ui.cronoSt ? "chip-prim" : "chip-out"} cr-esp" data-cr="${attr(minha.name)}" aria-pressed="${minha.name === ui.cronoSt}"><span class="msym">meeting_room</span>A sua: ${esc(minha.name)}</button>` : ""}
+        ${est.filter((s) => s.name !== minha?.name).map((s) => `<button class="chip ${s.name === ui.cronoSt ? "chip-prim" : "chip-out"}" data-cr="${attr(s.name)}" aria-pressed="${s.name === ui.cronoSt}">${esc(s.name)}</button>`).join("")}
+      </div>
+      ${ui.cronoSt === "__agora" ? cronoAgora(est, minha) : ""}
+      ${st && ui.cronoSt !== "__agora" ? `<ol class="cr-fila">${(() => {
         const marca = marcaFila(st.rows, (r) => r);
         return st.rows.map((r) => {
           const tag = marca.get(r);
@@ -2862,6 +2905,141 @@ function renderCrono(root) {
     render();
   });
   $$("[data-cr]").forEach((b) => b.addEventListener("click", () => { ui.cronoSt = b.dataset.cr; render(); }));
+}
+
+/* ============================================================
+   8.1c PERFIL (foto e WhatsApp) e aba SALA
+   Cada pessoa escolhe se compartilha a foto e o WhatsApp; só os
+   voluntários do sistema veem. O botão abre a conversa (wa.me).
+   ============================================================ */
+function perfilDe(cpf) { return (cpf && store.data.perfis?.[cpf]) || null; }
+function avatarHtml(u, size = 32) {
+  const p = perfilDe(u?.cpf);
+  const st = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.36)}px`;
+  return p?.foto ? `<img class="avatar" src="${attr(p.foto)}" alt="" style="${st};object-fit:cover">`
+    : `<span class="avatar" style="${st}">${esc(initials(u?.name || "?"))}</span>`;
+}
+function waLink(num, msg) {
+  const d = onlyDigits(num);
+  if (d.length < 10) return "";
+  return "https://wa.me/" + (d.length <= 11 ? "55" + d : d) + (msg ? "?text=" + encodeURIComponent(msg) : "");
+}
+function waBtn(u) {
+  const p = perfilDe(u.cpf);
+  if (!p?.whats || u.id === session.user?.id) return "";
+  const msg = `Olá, ${u.name.split(/\s+/)[0]}! Aqui é ${session.user.name.split(/\s+/)[0]}, da avaliação do FIRST LEGO League Explore.`;
+  const href = waLink(p.whats, msg);
+  return href ? `<a class="btn btn-out btn-sm wa-btn" href="${attr(href)}" target="_blank" rel="noopener" title="Conversar no WhatsApp"><span class="msym sm">chat</span><span class="hide-sm">WhatsApp</span></a>` : "";
+}
+function maskTel(v) {
+  const d = onlyDigits(v).slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, d.length - 4)}-${d.slice(-4)}`;
+}
+/* reduz a foto para 256×256 (uns 20 KB) antes de guardar */
+function fotoReduzida(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const s = 256, c = document.createElement("canvas"), k = Math.min(img.width, img.height);
+      c.width = c.height = s;
+      c.getContext("2d").drawImage(img, (img.width - k) / 2, (img.height - k) / 2, k, k, 0, 0, s, s);
+      URL.revokeObjectURL(img.src);
+      res(c.toDataURL("image/jpeg", 0.8));
+    };
+    img.onerror = () => rej(new Error("não consegui abrir essa imagem"));
+    img.src = URL.createObjectURL(file);
+  });
+}
+async function salvarPerfil(mud) {
+  const u = session.user;
+  const cur = perfilDe(u.cpf) || {};
+  const novo = { name: u.name, foto: cur.foto || "", whats: cur.whats || "", ...mud, at: nowISO() };
+  if (!novo.foto) delete novo.foto;
+  if (!novo.whats) delete novo.whats;
+  await FB.db.doc("perfis/" + u.cpf).set(novo);
+  store.data.perfis = { ...(store.data.perfis || {}), [u.cpf]: { id: u.cpf, ...novo } };
+}
+function perfilBox() {
+  const u = session.user;
+  if (store.backend !== "fb" || u.kind !== "vol") return "";
+  const p = perfilDe(u.cpf) || {};
+  return `<div class="pf-box">
+    <div class="row g-sm center">
+      ${avatarHtml(u, 64)}
+      <div class="stack g-2xs">
+        <label class="btn btn-out btn-sm" style="cursor:pointer"><input type="file" accept="image/*" id="pf-foto" hidden><span class="msym sm">photo_camera</span>${p.foto ? "Trocar foto" : "Compartilhar minha foto"}</label>
+        ${p.foto ? `<button type="button" class="btn btn-text btn-sm" id="pf-foto-rm"><span class="msym sm">hide_image</span>Remover foto</button>` : ""}
+      </div>
+    </div>
+    <div class="field" style="margin-top:var(--sp-md)"><label for="pf-wa">Meu WhatsApp</label>
+      <div class="row g-2xs"><input id="pf-wa" type="tel" inputmode="tel" placeholder="(21) 99999-9999" value="${attr(maskTel(p.whats || ""))}" style="flex:1">
+        <button type="button" class="btn btn-fill btn-sm" id="pf-wa-ok"><span class="msym sm">chat</span>${p.whats ? "Salvar" : "Compartilhar meu WhatsApp"}</button></div>
+      <span class="hint">Foto e WhatsApp aparecem só para os voluntários do sistema, na aba Sala. Para parar de compartilhar o número, apague e salve.</span></div>
+  </div>`;
+}
+function bindPerfilBox(el, reabrir) {
+  $("#pf-wa", el)?.addEventListener("input", (e) => { e.target.value = maskTel(e.target.value); });
+  $("#pf-foto", el)?.addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try { await salvarPerfil({ foto: await fotoReduzida(f) }); toast("Foto compartilhada."); reabrir(); }
+    catch (err) { toast("Não foi possível salvar a foto: " + (err.code ? fbMsg(err) : err.message), "err"); }
+  });
+  $("#pf-foto-rm", el)?.addEventListener("click", async () => {
+    try { await salvarPerfil({ foto: "" }); toast("Foto removida."); reabrir(); } catch (err) { toast("Não foi possível remover: " + fbMsg(err), "err"); }
+  });
+  $("#pf-wa-ok", el)?.addEventListener("click", async () => {
+    const v = onlyDigits($("#pf-wa", el).value);
+    if (v && v.length < 10) return toast("Digite o número com DDD.", "err");
+    try { await salvarPerfil({ whats: v }); toast(v ? "WhatsApp compartilhado." : "Você parou de compartilhar o WhatsApp."); reabrir(); }
+    catch (err) { toast("Não foi possível salvar: " + fbMsg(err), "err"); }
+  });
+}
+
+/* ---------- aba Sala: colegas, quem orienta e as outras salas ---------- */
+function renderSala(root) {
+  const ev = currentEvent(), me = session.user;
+  const pessoas = store.all("users").filter((u) => (u.roles?.[ev.id] || []).length);
+  const minha = judgeRoomId(me, ev.id);
+  const rooms = roomsOf(ev.id).slice().sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { numeric: true }));
+  const naSala = (rid) => pessoas.filter((u) => judgeRoomId(u, ev.id) === rid).sort(byName);
+  const orient = pessoas.filter((u) => u.roles[ev.id].some((r) => r === "lider" || r === "regional")).sort(byName);
+  const papel = (u) => ROLE_ORDER.filter((r) => u.roles[ev.id].includes(r) && r !== "avaliador").map((r) => ROLES[r].label).join(" · ") || "Avaliador(a)";
+  const linha = (u, sub) => `<li class="pp-row">${avatarHtml(u, 40)}
+      <div class="pp-main"><b>${esc(u.name)}${u.id === me.id ? ` <span class="chip chip-out" style="vertical-align:1px">você</span>` : ""}</b><span class="small muted">${esc(sub || "")}</span></div>
+      ${waBtn(u)}</li>`;
+  const meu = perfilDe(me.cpf);
+  root.innerHTML = `
+    <div class="page-head">
+      <div class="grow">
+        <div class="eyebrow">${eventEyebrow()}</div>
+        <h1>Sala</h1>
+        <p class="muted small">Seus colegas de sala, quem orienta a avaliação e quem está nas outras salas.</p>
+      </div>
+      ${store.backend === "fb" ? `<button class="btn ${meu?.foto || meu?.whats ? "btn-out" : "btn-fill"} no-print" id="sl-perfil"><span class="msym">account_circle</span>${meu?.foto || meu?.whats ? "Meu perfil" : "Compartilhar foto e WhatsApp"}</button>` : ""}
+    </div>
+    <div class="card" style="margin-bottom:var(--sp-lg)">
+      ${minha ? `<div class="sec-title"><h2>${esc(roomName(minha))}</h2><span class="chip chip-prim"><span class="msym">meeting_room</span>Minha sala</span></div>
+        <ul class="pp-list">${naSala(minha).map((u) => linha(u, papel(u))).join("")}</ul>`
+      : emptyBox("meeting_room", "Você não está em uma sala", can.evalOrg() ? "Como Líder de Avaliação, você acompanha todas as salas." : "A organização ainda vai colocar você em uma sala.")}
+    </div>
+    <div class="card" style="margin-bottom:var(--sp-lg)">
+      <div class="sec-title"><h2>Quem orienta</h2><span class="chip chip-out">${orient.length}</span></div>
+      <p class="small muted" style="margin-bottom:var(--sp-sm)">Procure estas pessoas em caso de dúvida durante a avaliação.</p>
+      <ul class="pp-list">${orient.map((u) => linha(u, papel(u))).join("") || `<li class="small muted">Ninguém indicado ainda.</li>`}</ul>
+    </div>
+    <div class="card">
+      <div class="sec-title"><h2>Outras salas</h2></div>
+      ${rooms.filter((r) => r.id !== minha).map((r) => {
+        const gente = naSala(r.id);
+        return `<details class="sl-room"><summary><span class="msym sm">meeting_room</span><b>${esc(r.name)}</b><span class="small muted">${gente.length} pessoa(s)</span>
+          <span class="sl-faces">${gente.slice(0, 4).map((u) => avatarHtml(u, 24)).join("")}</span><span class="msym sm right chev">expand_more</span></summary>
+          <ul class="pp-list">${gente.map((u) => linha(u, papel(u))).join("") || `<li class="small muted">Sem avaliadores.</li>`}</ul></details>`;
+      }).join("") || `<p class="small muted">Não há outras salas.</p>`}
+    </div>`;
+  $("#sl-perfil")?.addEventListener("click", () => $("#usr-menu")?.click());
 }
 
 /* ============================================================
