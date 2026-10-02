@@ -215,6 +215,8 @@ input[type=date],input[type=tel],select,textarea{
   transition:border-color .14s,box-shadow .14s;
 }
 textarea{min-height:76px;resize:vertical;line-height:1.5;padding:var(--sp-sm)}
+/* celular: campo com letra < 16px faz o iPhone dar zoom ao digitar (e não voltar) */
+@media (max-width:900px), (pointer:coarse){input,select,textarea{font-size:16px!important}}
 input:focus,select:focus,textarea:focus{
   outline:none;border-color:var(--sys-primary);box-shadow:0 0 0 2px var(--sys-primary-container);
 }
@@ -1119,6 +1121,21 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .tnum .tnow.agora{background:var(--sys-success-container);color:var(--sys-on-success-container)}
 .tnum .tnow.proxima{background:var(--sys-warning-container);color:var(--sys-on-warning-container)}
 .team-row:has(.tnow.agora){box-shadow:inset 3px 0 0 var(--sys-primary)}
+.pf-convite{margin-bottom:var(--sp-lg);align-items:center;flex-wrap:wrap;gap:var(--sp-sm)}
+.pf-convite .grow{min-width:200px}
+.ans-card{display:flex;align-items:center;gap:var(--sp-xl);padding:var(--sp-xl)}
+.ans-art{width:220px;flex:none;max-width:42%}
+.ans-txt h2{font-size:26px;margin-bottom:var(--sp-xs)}
+.ans-cont{font-size:18px;margin-bottom:var(--sp-sm);color:var(--sys-primary)}
+.ans-txt p{margin-bottom:var(--sp-sm)}
+.ans-bot{animation:ans-pula 2.4s ease-in-out infinite;transform-origin:92px 170px}
+.ans-luz{animation:ans-pisca 1.2s ease-in-out infinite}
+.ans-braco{animation:ans-acena 1.2s ease-in-out infinite;transform-origin:60px 110px}
+@keyframes ans-pula{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes ans-pisca{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes ans-acena{0%,100%{transform:rotate(0)}50%{transform:rotate(-14deg)}}
+@media (prefers-reduced-motion:reduce){.ans-bot,.ans-luz,.ans-braco{animation:none}}
+@media (max-width:600px){.ans-card{flex-direction:column;text-align:center;padding:var(--sp-lg)}.ans-art{max-width:70%;width:200px}}
 .pf-sep{border:none;border-top:1px solid var(--sys-outline-variant);margin:var(--sp-md) 0}
 .pp-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .pp-row{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 0;border-top:1px solid var(--sys-outline-variant)}
@@ -1218,7 +1235,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "3.4.0";
+const APP_VERSION = "3.4.1";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -2718,9 +2735,10 @@ function viewApp() {
         ${tabs.map((x) => `<button class="rail-item" data-tab="${x.id}" ${x.id === tab ? 'aria-current="page"' : ""}>
           <span class="msym">${x.icon}</span><span>${x.label}</span></button>`).join("")}
       </nav>` : ""}
-      <div class="main"><div class="page" id="tab-root"></div></div>
+      <div class="main">${conviteHtml() ? `<div class="page">${conviteHtml()}</div>` : ""}<div class="page" id="tab-root"></div></div>
     </div>`;
   bindShellBar();
+  bindConvite();
   $$("[data-tab]").forEach((b) => b.addEventListener("click", () => {
     session.tab = b.dataset.tab; session.save();
     ui.flushRubric?.(); ui.flushRubric = null;
@@ -3028,6 +3046,21 @@ async function salvarPerfil(mud) {
   if (!novo.whats) delete novo.whats;
   await FB.db.doc("perfis/" + u.cpf).set(novo);
   store.data.perfis = { ...(store.data.perfis || {}), [u.cpf]: { id: u.cpf, ...novo } };
+}
+/* convite em todas as telas até a pessoa compartilhar a foto ou o WhatsApp */
+function conviteHtml() {
+  const u = session.user;
+  if (store.backend !== "fb" || u?.kind !== "vol" || ui.conviteFechado) return "";
+  const p = perfilDe(u.cpf);
+  if (p?.foto || p?.whats) return "";
+  return `<div class="banner info pf-convite no-print"><span class="msym">account_circle</span>
+    <div class="grow"><b>Compartilhe sua foto e seu WhatsApp</b><br><span class="small">Assim os colegas de sala e a organização reconhecem e falam com você no dia.</span></div>
+    <div class="row g-2xs"><button class="btn btn-fill btn-sm" data-convite><span class="msym sm">photo_camera</span>Compartilhar</button>
+    <button class="btn btn-text btn-sm" data-convite-x>Depois</button></div></div>`;
+}
+function bindConvite() {
+  $$("[data-convite]").forEach((b) => b.addEventListener("click", () => $("#usr-menu")?.click()));
+  $$("[data-convite-x]").forEach((b) => b.addEventListener("click", () => { ui.conviteFechado = true; $$(".pf-convite").forEach((x) => x.remove()); }));
 }
 function perfilBox() {
   const u = session.user;
@@ -3508,6 +3541,46 @@ function renderTeamHome(root) {
       </div>
       ${cfg.released && sent.length ? `<button class="btn btn-out no-print" id="tm-print"><span class="msym">print</span>Imprimir / PDF</button>` : ""}
     </div>`;
+
+  /* antes do dia do evento: uma brincadeira com contagem regressiva (some sozinha no dia) */
+  const ev = currentEvent();
+  const hojeISO = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+  if (!cfg.released && ev?.date && hojeISO < ev.date) {
+    const dias = Math.round((new Date(ev.date + "T12:00:00") - new Date(hojeISO + "T12:00:00")) / 86400000);
+    root.innerHTML = `<div class="team-page">${head}
+      <div class="card ans-card">
+        <svg class="ans-art" viewBox="0 0 220 200" role="img" aria-label="Robô explorador segurando uma lupa ao lado de um osso de dinossauro">
+  <ellipse cx="110" cy="186" rx="78" ry="9" fill="#000" opacity=".08"/>
+  <g class="ans-bone"><path d="M150 168h40" stroke="#e9dcc3" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="148" cy="163" r="7" fill="#e9dcc3"/><circle cx="148" cy="173" r="7" fill="#e9dcc3"/><circle cx="192" cy="163" r="7" fill="#e9dcc3"/><circle cx="192" cy="173" r="7" fill="#e9dcc3"/></g>
+  <g class="ans-bot">
+    <line x1="92" y1="30" x2="92" y2="14" stroke="#6b4ea0" stroke-width="4" stroke-linecap="round"/>
+    <circle class="ans-luz" cx="92" cy="11" r="7" fill="#ffbf00"/>
+    <rect x="52" y="28" width="80" height="62" rx="20" fill="#8e5bd6"/>
+    <path d="M48 36q44-26 88 0" fill="#c58b3f"/><rect x="44" y="34" width="96" height="8" rx="4" fill="#a8722f"/>
+    <rect x="62" y="44" width="60" height="36" rx="14" fill="#fff"/>
+    <circle cx="80" cy="61" r="8" fill="#2b1d45"/><circle cx="104" cy="61" r="8" fill="#2b1d45"/>
+    <circle cx="83" cy="58" r="2.6" fill="#fff"/><circle cx="107" cy="58" r="2.6" fill="#fff"/>
+    <path d="M84 72q8 6 16 0" stroke="#2b1d45" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <circle cx="70" cy="72" r="4" fill="#ff8fb1" opacity=".7"/><circle cx="114" cy="72" r="4" fill="#ff8fb1" opacity=".7"/>
+    <rect x="60" y="94" width="64" height="58" rx="16" fill="#8e5bd6"/>
+    <rect x="76" y="106" width="32" height="22" rx="6" fill="#d9c8f3"/><circle cx="92" cy="117" r="5" fill="#2e9d4c"/>
+    <path d="M60 110q-22 -8 -24 -30" stroke="#8e5bd6" stroke-width="10" fill="none" stroke-linecap="round" class="ans-braco"/>
+    <path d="M124 112q20 6 26 24" stroke="#8e5bd6" stroke-width="10" fill="none" stroke-linecap="round"/>
+    <circle cx="156" cy="146" r="14" fill="#d1e4ff" stroke="#6b4ea0" stroke-width="5"/><line x1="146" y1="136" x2="138" y2="128" stroke="#6b4ea0" stroke-width="5" stroke-linecap="round"/>
+    <rect x="70" y="150" width="16" height="22" rx="7" fill="#6b4ea0"/><rect x="98" y="150" width="16" height="22" rx="7" fill="#6b4ea0"/>
+  </g>
+</svg>
+        <div class="ans-txt">
+          <h2>Estão ansiosos, né? 😄</h2>
+          <p class="ans-cont"><b>${dias === 1 ? "Falta 1 dia" : `Faltam ${dias} dias`}</b> para o ${esc(ev.name).replace(/\bFIRST\b/g, "<i>FIRST</i>")}!</p>
+          <p class="muted">Enquanto isso, que tal ensaiar a apresentação mais uma vez, dar um carinho no protótipo e caprichar no pôster? Os avaliadores estão animados para conhecer vocês.</p>
+          <p class="small muted">Depois do evento, a Rubrica de Avaliação e os comentários dos avaliadores aparecem aqui, nesta mesma página.</p>
+        </div>
+      </div>
+    </div>`;
+    return;
+  }
 
   if (!cfg.released || !sent.length) {
     root.innerHTML = `<div class="team-page">${head}
@@ -4424,6 +4497,7 @@ function viewEventPicker() {
   $("#app").innerHTML = `
     ${shellBar()}
     <div class="main page" style="margin:0 auto">
+      ${conviteHtml()}
       <div class="page-head">
         <div class="grow">
           <div class="eyebrow">${nac ? "Operação Nacional" : "Seus eventos"}</div>
@@ -4474,6 +4548,7 @@ function viewEventPicker() {
   $$("[data-ev]").forEach((b) => b.addEventListener("click", () => enterEvent(b.dataset.ev)));
   bindNacionalSection();
   bindBaseSection();
+  bindConvite();
 }
 function enterEvent(evId, tab) {
   session.eventId = evId;
