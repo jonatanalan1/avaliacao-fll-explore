@@ -1126,6 +1126,7 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .pp-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .pp-main b{overflow:hidden;text-overflow:ellipsis}
 .wa-btn{flex:none;color:#1a8f4a;border-color:#1a8f4a}
+.wa-btn.wa-org{border-style:dashed}
 .sl-room{border-top:1px solid var(--sys-outline-variant)}
 .sl-room:first-of-type{border-top:none}
 .sl-room summary{display:flex;align-items:center;gap:var(--sp-xs);padding:12px 0;cursor:pointer;list-style:none}
@@ -1136,7 +1137,11 @@ tr.nv-out td{background:var(--sys-warning-container)}
 @media (max-width:600px){.hide-sm{display:none}}
 .cr-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:var(--sp-md)}
 .cr-chips .chip{cursor:pointer;border:none;font:inherit}
-.cr-chips .cr-esp{font-weight:600}
+.cr-chips .cr-esp,.cr-sua{font-weight:600}
+.cr-sua{cursor:pointer;border:none;font:inherit;font-weight:600}
+.cr-depois li{opacity:.85}
+.cr-salas{margin-top:var(--sp-md)}
+.cr-salas summary{cursor:pointer;display:flex;align-items:center;gap:6px;color:var(--sys-primary);font-weight:500;margin-bottom:var(--sp-sm)}
 .cr-geral{display:flex;flex-wrap:wrap;gap:6px}
 .cr-fila{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
 .cr-fila li{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 12px;border:1px solid var(--sys-outline-variant);border-radius:12px}
@@ -1213,7 +1218,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "3.3.0";
+const APP_VERSION = "3.4.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1384,6 +1389,12 @@ function norm(s) {
   return String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 const onlyDigits = (s) => String(s ?? "").replace(/\D/g, "");
+/* "WILLIAM DE FREITAS LIMA" / "leandro bricio" → "William de Freitas Lima" / "Leandro Bricio" */
+const PARTICULAS = new Set(["da", "das", "de", "do", "dos", "e", "di", "du", "del", "della", "van", "von"]);
+function nomeProprio(s) {
+  return String(s ?? "").replace(/['’`´]+\s*$/, "").trim().replace(/\s+/g, " ").toLowerCase().split(" ")
+    .map((w, i) => (i > 0 && PARTICULAS.has(w) ? w : w.replace(/(^|[-'’])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()))).join(" ");
+}
 function fmtCPF(s) {
   const d = onlyDigits(s).padStart(11, "0").slice(-11);
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
@@ -1691,7 +1702,7 @@ const FB = {
     return p;
   },
   stop() {
-    this._unsubs.forEach((f) => f()); this._unsubs = [];
+    this._unsubs.forEach((f) => f()); this._unsubs = []; this._contUnsub = null;
     Object.values(this._evUnsubs).forEach((l) => l.forEach((f) => f())); this._evUnsubs = {};
     this._parts = {}; this._evKey = "";
   },
@@ -1711,11 +1722,35 @@ const FB = {
     espera.push(this._assina(L, "perfis", "all", db.collection("perfis")));
     await Promise.all(espera);
     await this._eventos();
+    await this.contatos();
     /* Operação Nacional fixa no código: garante o registro dela */
     if (NACIONAL_CPFS.includes(who.cpf) && !store.get("users", who.id)?.nacional) {
       await this.put("users", { id: who.id, cpf: who.cpf, name: who.name, nacional: true, bootstrap: true, active: true, roles: {}, rooms: {}, createdAt: nowISO() }).catch(() => {});
     }
     if (this.organiza()) this.loadBase().catch((e) => console.warn("base", e));
+  },
+  /* "organização" (Nacional, Operador Regional e Líderes) vê o telefone de todos;
+     os demais só o próprio (para compartilhar com um clique) */
+  souOrg() {
+    const u = this.who && store.get("users", this.who.id);
+    return this.nacional() || !!u?.org;
+  },
+  async contatos() {
+    const w = this.who, db = this.db;
+    if (this.nacional()) await this.marcarOrg();
+    if (this.souOrg()) {
+      if (!this._contUnsub) this._contUnsub = this._assina(this._unsubs, "contatos", "all", db.collection("contatos"));
+      await this._contUnsub;
+    } else {
+      try { const d = await db.doc("contatos/" + w.cpf).get(); store.data.contatos = d.exists ? { [w.cpf]: { id: w.cpf, ...d.data() } } : {}; } catch (e) { store.data.contatos = {}; }
+    }
+  },
+  /* a Nacional mantém a marca "org" de quem é Líder ou Operador Regional em algum evento */
+  async marcarOrg() {
+    for (const u of store.all("users")) {
+      const deve = Object.values(u.roles || {}).some((r) => (r || []).some((x) => x === "lider" || x === "regional"));
+      if (!!u.org !== deve) { try { await this.db.doc("users/" + u.id).set({ org: deve }, { merge: true }); } catch (e) { /* segue */ } }
+    }
   },
   nacional() {
     const w = this.who;
@@ -1831,7 +1866,9 @@ const FB = {
     for (const r of rows) {
       const cpf = cpfFromCell(r.cpf);
       if (cpf.length !== 11) continue;
-      const doc = { name: String(r.name || "").trim() || fmtCPF(cpf), city: r.city || "", uf: r.uf || "", interest: r.interest || "", etapa: r.etapa || "", explore: r.explore || "", updatedAt: nowISO() };
+      const doc = { name: nomeProprio(r.name) || fmtCPF(cpf), city: r.city || "", uf: r.uf || "", interest: r.interest || "", etapa: r.etapa || "", explore: r.explore || "", updatedAt: nowISO() };
+      const tel = onlyDigits(r.tel);
+      if (tel.length >= 10) ops.push((b) => b.set(db.doc("contatos/" + cpf), { tel, name: doc.name }));
       const h = r.acesso || (String(r.senha ?? "").trim() ? this.acesso("vol", cpf, r.senha) : "");
       const cur = idx["v-" + cpf];
       if (h) {
@@ -1942,7 +1979,7 @@ const LS_KEY = "explore.v2";
 const store = {
   mode: "local",
   db: null,
-  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {} },
+  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {} },
   listeners: new Set(),
   ready: false,
 
@@ -2835,8 +2872,7 @@ function marcaFila(rows, getSlot) {
 const slotTxt = (s) => (s ? `${s.start}–${s.end}` : "");
 
 /* o que está acontecendo agora em cada sala (no dia do evento) */
-function cronoAgora(est, minha) {
-  if (!hojeEhEvento()) return `<div class="banner info"><span class="msym">schedule</span><div>No dia do evento, aqui aparece o que está acontecendo <b>agora</b> em cada sala e quem vem em seguida.</div></div>`;
+function cronoAgora(est, minha, semTitulo) {
   const n = agoraHM();
   const linhas = est.map((s) => {
     const agora = s.rows.find((r) => r.start <= n && n < (r.notes_end || r.end));
@@ -2848,7 +2884,39 @@ function cronoAgora(est, minha) {
         ${prox ? `<br><span class="small muted">Próxima: ${esc(prox.team_name)} às ${esc(prox.start)}</span>` : ""}</span>
     </li>`;
   }).join("");
-  return `<p class="small muted" style="margin-bottom:var(--sp-xs)">Agora: <b class="mono">${esc(n)}</b></p><ol class="cr-fila">${linhas}</ol>`;
+  return `${semTitulo ? "" : `<p class="small muted" style="margin-bottom:var(--sp-xs)">Agora: <b class="mono">${esc(n)}</b></p>`}<ol class="cr-fila">${linhas}</ol>`;
+}
+
+/* "Agora": o que o cronograma diz que acontece neste horário, agrupado por atividade */
+function cronoAgoraGeral(d, est, minha, ev) {
+  const n = agoraHM(), hoje = hojeEhEvento(ev);
+  const calls = (d.master || []).flatMap((m) => (m.calls || []).map((c) => ({ ...c, start: m.time, end: c.end || m.time })));
+  const grupo = (lista) => {
+    const g = new Map();
+    lista.forEach((c) => {
+      const x = g.get(c.title) || { title: c.title, start: c.start, end: c.end, locs: new Set(), equipes: 0, todos: false };
+      x.start = c.start < x.start ? c.start : x.start; x.end = c.end > x.end ? c.end : x.end;
+      if (c.loc) x.locs.add(c.loc);
+      x.equipes += (c.teams || []).length; x.todos = x.todos || !!c.all;
+      g.set(c.title, x);
+    });
+    return [...g.values()].map((x) => {
+      const locs = [...x.locs];
+      const onde = x.todos ? "todas as equipes" : locs.length && locs.every((l) => !/^equipe\b/i.test(l)) && locs.length <= 8
+        ? locs.sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true })).join(", ") : `${x.equipes} equipe(s)`;
+      return `<li><span class="mono cr-h">${esc(x.start)}–${esc(x.end)}</span><span class="cr-t"><b>${esc(x.title)}</b> <span class="small muted">· ${esc(onde)}</span></span></li>`;
+    }).join("");
+  };
+  const ativos = calls.filter((c) => c.start <= n && n < c.end);
+  const prox = calls.filter((c) => c.start > n).map((c) => c.start).sort()[0];
+  const depois = prox ? calls.filter((c) => c.start === prox) : [];
+  const inicio = calls.map((c) => c.start).sort()[0], fim = calls.map((c) => c.end).sort().slice(-1)[0];
+  return `
+    ${hoje ? "" : `<p class="small muted" style="margin-bottom:var(--sp-sm)">O evento é em ${fmtDate(ev.date)}. Abaixo, o que acontece <b>neste horário</b> no dia.</p>`}
+    <p class="small" style="margin-bottom:var(--sp-xs)"><b class="mono">${esc(n)}</b>${!ativos.length ? (n < inicio ? ` · o dia começa às ${esc(inicio)}` : n >= fim ? ` · a programação terminou às ${esc(fim)}` : " · intervalo") : ""}</p>
+    ${ativos.length ? `<ol class="cr-fila">${grupo(ativos)}</ol>` : ""}
+    ${depois.length ? `<p class="small muted" style="margin:var(--sp-md) 0 var(--sp-xs)">Em seguida</p><ol class="cr-fila cr-depois">${grupo(depois)}</ol>` : ""}
+    ${est.length ? `<details class="cr-salas"><summary class="small"><span class="msym sm">meeting_room</span>Nas salas de avaliação agora</summary>${cronoAgora(est, minha, true)}</details>` : ""}`;
 }
 
 /* ---------- aba Cronograma (voluntários do evento) ---------- */
@@ -2859,10 +2927,9 @@ function renderCrono(root) {
   const est = cronoEstacoes(ev) || [];
   const myRoom = judgeRoomId(session.user);
   const minha = estacaoDaSala(est, store.get("rooms", myRoom));
-  if (!ui.cronoSt || (ui.cronoSt !== "__agora" && !est.some((s) => s.name === ui.cronoSt))) ui.cronoSt = minha?.name || est[0]?.name || "";
+  if (!ui.cronoSt || !est.some((s) => s.name === ui.cronoSt)) ui.cronoSt = minha?.name || est[0]?.name || "";
   const st = est.find((s) => s.name === ui.cronoSt);
   const n = agoraHM(), hoje = hojeEhEvento(ev);
-  const geral = (d?.master || []).flatMap((m) => (m.calls || []).filter((c) => c.all).map((c) => ({ time: m.time, ...c })));
   root.innerHTML = `
     <div class="page-head">
       <div class="grow">
@@ -2876,17 +2943,14 @@ function renderCrono(root) {
       </div>
     </div>
     ${!d ? `<div class="card">${emptyBox("schedule", cfg ? "Carregando…" : "Sem cronograma", cfg ? "Se demorar, confira a internet e clique em Atualizar." : "A Operação Nacional liga o cronograma em Editar evento.")}</div>` : `
-    ${geral.length ? `<div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Para todos</h2></div>
-      <div class="cr-geral">${geral.map((g) => `<span class="chip ${hoje && g.time <= n && n < (g.end || g.time) ? "chip-prim" : "chip-out"}"><b class="mono">${esc(g.time)}${g.end ? "–" + esc(g.end) : ""}</b>&nbsp;${esc(g.title)}${g.loc ? " · " + esc(g.loc) : ""}</span>`).join("")}</div></div>` : ""}
+    <div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Agora</h2><span class="msym" style="color:var(--sys-primary)">radio_button_checked</span></div>
+      ${cronoAgoraGeral(d, est, minha, ev)}</div>
     <div class="card">
-      <div class="sec-title"><h2>Filas de avaliação</h2></div>
+      <div class="sec-title"><h2>Filas de avaliação</h2>${minha ? `<button class="chip ${minha.name === ui.cronoSt ? "chip-prim" : "chip-out"} cr-esp cr-sua" data-cr="${attr(minha.name)}" title="Ver a fila da sua sala"><span class="msym">meeting_room</span>A sua: ${esc(minha.name)}</button>` : ""}</div>
       <div class="cr-chips" role="tablist">
-        <button class="chip ${ui.cronoSt === "__agora" ? "chip-prim" : "chip-out"} cr-esp" data-cr="__agora" aria-pressed="${ui.cronoSt === "__agora"}"><span class="msym">radio_button_checked</span>Agora</button>
-        ${minha ? `<button class="chip ${minha.name === ui.cronoSt ? "chip-prim" : "chip-out"} cr-esp" data-cr="${attr(minha.name)}" aria-pressed="${minha.name === ui.cronoSt}"><span class="msym">meeting_room</span>A sua: ${esc(minha.name)}</button>` : ""}
-        ${est.filter((s) => s.name !== minha?.name).map((s) => `<button class="chip ${s.name === ui.cronoSt ? "chip-prim" : "chip-out"}" data-cr="${attr(s.name)}" aria-pressed="${s.name === ui.cronoSt}">${esc(s.name)}</button>`).join("")}
+        ${est.map((s) => `<button class="chip ${s.name === ui.cronoSt ? "chip-prim" : "chip-out"}" data-cr="${attr(s.name)}" aria-pressed="${s.name === ui.cronoSt}">${esc(s.name)}</button>`).join("")}
       </div>
-      ${ui.cronoSt === "__agora" ? cronoAgora(est, minha) : ""}
-      ${st && ui.cronoSt !== "__agora" ? `<ol class="cr-fila">${(() => {
+      ${st ? `<ol class="cr-fila">${(() => {
         const marca = marcaFila(st.rows, (r) => r);
         return st.rows.map((r) => {
           const tag = marca.get(r);
@@ -2924,12 +2988,16 @@ function waLink(num, msg) {
   if (d.length < 10) return "";
   return "https://wa.me/" + (d.length <= 11 ? "55" + d : d) + (msg ? "?text=" + encodeURIComponent(msg) : "");
 }
+function telDe(cpf) { return store.data.contatos?.[cpf]?.tel || ""; }
 function waBtn(u) {
-  const p = perfilDe(u.cpf);
-  if (!p?.whats || u.id === session.user?.id) return "";
+  let p = perfilDe(u.cpf);
+  if (u.id === session.user?.id) return "";
+  const org = !p?.whats && store.backend === "fb" && FB.souOrg() && telDe(u.cpf);
+  if (!p?.whats && !org) return "";
+  if (org) p = { whats: telDe(u.cpf) };
   const msg = `Olá, ${u.name.split(/\s+/)[0]}! Aqui é ${session.user.name.split(/\s+/)[0]}, da avaliação do FIRST LEGO League Explore.`;
   const href = waLink(p.whats, msg);
-  return href ? `<a class="btn btn-out btn-sm wa-btn" href="${attr(href)}" target="_blank" rel="noopener" title="Conversar no WhatsApp"><span class="msym sm">chat</span><span class="hide-sm">WhatsApp</span></a>` : "";
+  return href ? `<a class="btn btn-out btn-sm wa-btn ${org ? "wa-org" : ""}" href="${attr(href)}" target="_blank" rel="noopener" title="${org ? "Número da base: só a organização vê" : "Conversar no WhatsApp"}"><span class="msym sm">chat</span><span class="hide-sm">WhatsApp</span></a>` : "";
 }
 function maskTel(v) {
   const d = onlyDigits(v).slice(0, 11);
@@ -2974,9 +3042,9 @@ function perfilBox() {
       </div>
     </div>
     <div class="field" style="margin-top:var(--sp-md)"><label for="pf-wa">Meu WhatsApp</label>
-      <div class="row g-2xs"><input id="pf-wa" type="tel" inputmode="tel" placeholder="(21) 99999-9999" value="${attr(maskTel(p.whats || ""))}" style="flex:1">
+      <div class="row g-2xs"><input id="pf-wa" type="tel" inputmode="tel" placeholder="(21) 99999-9999" value="${attr(maskTel(p.whats || telDe(u.cpf) || ""))}" style="flex:1">
         <button type="button" class="btn btn-fill btn-sm" id="pf-wa-ok"><span class="msym sm">chat</span>${p.whats ? "Salvar" : "Compartilhar meu WhatsApp"}</button></div>
-      <span class="hint">Foto e WhatsApp aparecem só para os voluntários do sistema, na aba Sala. Para parar de compartilhar o número, apague e salve.</span></div>
+      <span class="hint">${p.whats ? "Seu WhatsApp está visível para os voluntários, na aba Sala. Para parar de compartilhar, apague e salve." : telDe(u.cpf) ? "Este é o número da sua inscrição. Confira e clique em Compartilhar para os colegas verem." : "Foto e WhatsApp aparecem só para os voluntários do sistema, na aba Sala."} A organização do evento sempre tem o seu telefone de inscrição.</span></div>
   </div>`;
 }
 function bindPerfilBox(el, reabrir) {
@@ -5858,7 +5926,7 @@ function montarBase(abas) {
     const cpf = cpfFromCell(r.cpf);
     if (cpf.length !== 11 || vistos.has(cpf)) return;
     vistos.add(cpf);
-    vols.push({ cpf, name: pick(r, "nome completo", "nome"), senha: pick(r, "senha") || senhasVol[cpf] || "", city: pick(r, "cidade"), uf: pick(r, "uf"),
+    vols.push({ cpf, name: pick(r, "nome completo", "nome"), senha: pick(r, "senha") || senhasVol[cpf] || "", city: pick(r, "cidade"), uf: pick(r, "uf"), tel: pick(r, "telefone", "celular", "whatsapp"),
       interest: pick(r, "interesse avaliador"), etapa: pick(r, "etapa concluida"), explore: pick(r, "fll explore - papel") });
   });
   /* quem tem senha (aba Login) mas não está no cadastro também entra */
@@ -5896,6 +5964,7 @@ function baseImportModal() {
       <p class="small muted">Quem já está na base é atualizado; a senha só muda se vier uma diferente. Linhas sem senha entram sem login.</p>
       <div class="field"><label for="bi-file">Arquivo</label><input type="file" id="bi-file" accept=".xlsx,.xls,.ods,.csv,.tsv,.txt,.json"></div>
       <div class="field"><label for="bi-txt">Ou cole aqui</label><textarea id="bi-txt" rows="5" placeholder="CPF&#9;Nome&#9;Senha"></textarea></div>
+      <label class="check small"><input type="checkbox" id="bi-so"> Só atualizar quem já está na base (não incluir pessoas/equipes novas)</label>
       <div id="bi-prev" class="banner info" hidden><span class="msym">fact_check</span><span></span></div>
     </div>`,
     footer: `<button class="btn btn-text" data-close>Cancelar</button><button class="btn btn-fill" data-ok disabled><span class="msym">upload</span>Importar</button>`,
@@ -5924,6 +5993,10 @@ function baseImportModal() {
         ok.disabled = true;
         ok.innerHTML = `<span class="msym spin">progress_activity</span>Importando…`;
         try {
+          if ($("#bi-so", el).checked) {
+            const cpfs = new Set((store.base?.volunteers || []).map((v) => v.cpf)), nomes = new Set((store.base?.teams || []).map((t) => norm(t.name)));
+            dados = { vols: dados.vols.filter((v) => cpfs.has(cpfFromCell(v.cpf))), eqs: dados.eqs.filter((t) => nomes.has(norm(t.name))) };
+          }
           if (dados.vols.length) await FB.gravarPessoas(dados.vols);
           if (dados.eqs.length) await FB.gravarEquipes(dados.eqs);
           await store.audit(null, "Base importada", `${dados.vols.length} voluntário(s), ${dados.eqs.length} equipe(s)`);
