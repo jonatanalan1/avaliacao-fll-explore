@@ -1136,6 +1136,30 @@ tr.nv-out td{background:var(--sys-warning-container)}
 @keyframes ans-acena{0%,100%{transform:rotate(0)}50%{transform:rotate(-14deg)}}
 @media (prefers-reduced-motion:reduce){.ans-bot,.ans-luz,.ans-braco{animation:none}}
 @media (max-width:600px){.ans-card{flex-direction:column;text-align:center;padding:var(--sp-lg)}.ans-art{max-width:70%;width:200px}}
+.rc-equipe{margin-top:var(--sp-lg)}
+.rc-passo{font-weight:600;font-size:13px;margin:var(--sp-md) 0 var(--sp-xs);color:var(--sys-on-surface-variant)}
+.rc-frases{display:flex;flex-direction:column;gap:6px}
+.rc-frase{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--sys-outline-variant);border-radius:12px;cursor:pointer;line-height:1.9}
+.rc-frase.on{border-color:var(--sys-primary);background:var(--sys-primary-container)}
+.rc-frase input{margin-top:6px;flex:none}
+.rc-sel{width:auto!important;min-height:32px!important;padding:2px 8px!important;display:inline-block;margin:0 2px}
+.rc-emojis{display:flex;flex-wrap:wrap;gap:6px}
+.rc-emoji{width:44px;height:44px;font-size:22px;border-radius:12px;border:1px solid var(--sys-outline-variant);background:var(--sys-surface);cursor:pointer}
+.rc-emoji.on{border:2px solid var(--sys-primary);background:var(--sys-primary-container)}
+.rc-cores{display:flex;gap:8px}
+.rc-cor{width:36px;height:36px;border-radius:50%;border:2px solid transparent;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.rc-cor.on{border-color:var(--sys-on-surface)}
+.rc-envio{display:flex;justify-content:center;margin:var(--sp-sm) 0}
+.rc-card{margin:0;padding:22px 24px;border-radius:18px;max-width:440px;width:100%;box-shadow:0 6px 18px rgba(0,0,0,.08);transform:rotate(-1deg)}
+.rc-card .rc-em{font-size:28px;margin-bottom:6px;letter-spacing:4px}
+.rc-card blockquote{margin:0;font-size:19px;font-weight:600;line-height:1.35}
+.rc-card figcaption{margin-top:10px;font-size:13px;opacity:.85}
+.rc-card.mini{padding:16px 18px;transform:none}
+.rc-card.mini blockquote{font-size:16px}
+.rc-card.mini .rc-em{font-size:22px}
+.rc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--sp-sm)}
+.rc-grid .rc-card:nth-child(odd){transform:rotate(-.6deg)}
+.rc-grid .rc-card:nth-child(even){transform:rotate(.6deg)}
 .pf-sep{border:none;border-top:1px solid var(--sys-outline-variant);margin:var(--sp-md) 0}
 .pp-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .pp-row{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 0;border-top:1px solid var(--sys-outline-variant)}
@@ -1235,7 +1259,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "3.4.1";
+const APP_VERSION = "3.5.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1575,7 +1599,7 @@ function gasError(e) {
    ------------------------------------------------------------ */
 const NACIONAL_CPFS = ["11111111111", "05160542957"];   /* os mesmos das regras do Firestore */
 const FB_DOMINIO = "fllexplore.app";                     /* só dá nome às contas; nenhum e-mail é enviado */
-const FB_COL_EVENTO = ["teams", "rooms", "evaluations", "settings", "deliberation"];
+const FB_COL_EVENTO = ["teams", "rooms", "evaluations", "settings", "deliberation", "recados"];
 function isFb() { return !!(typeof FIREBASE_CONFIG !== "undefined" && FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey) && !isGas(); }
 /* modo com servidor (Google ou Firebase): base central, login no servidor */
 function srv() { return store.backend === "gas" || store.backend === "fb"; }
@@ -1732,6 +1756,7 @@ const FB = {
       espera.push(this._assina(L, "teams", "meu", db.collection("teams").where("baseId", "==", who.baseId)));
       espera.push(this._assina(L, "settings", "lib", db.collection("liberacoes"), (x) => ({ id: x.eventId || x.id, released: !!x.released })));
       espera.push(this._assina(L, "evaluations", "dev", db.collection("devolutivas").where("baseId", "==", who.baseId)));
+      espera.push(this._assina(L, "recados", "meus", db.collection("recados").where("baseId", "==", who.baseId)));
       await Promise.all(espera);
       return;
     }
@@ -1996,7 +2021,7 @@ const LS_KEY = "explore.v2";
 const store = {
   mode: "local",
   db: null,
-  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {} },
+  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {}, recados: {} },
   listeners: new Set(),
   ready: false,
 
@@ -3121,6 +3146,7 @@ function renderSala(root) {
       </div>
       ${store.backend === "fb" ? `<button class="btn ${meu?.foto || meu?.whats ? "btn-out" : "btn-fill"} no-print" id="sl-perfil"><span class="msym">account_circle</span>${meu?.foto || meu?.whats ? "Meu perfil" : "Compartilhar foto e WhatsApp"}</button>` : ""}
     </div>
+    ${recadosVoluntario()}
     <div class="card" style="margin-bottom:var(--sp-lg)">
       ${minha ? `<div class="sec-title"><h2>${esc(roomName(minha))}</h2><span class="chip chip-prim"><span class="msym">meeting_room</span>Minha sala</span></div>
         <ul class="pp-list">${naSala(minha).map((u) => linha(u, papel(u))).join("")}</ul>`
@@ -3141,6 +3167,177 @@ function renderSala(root) {
       }).join("") || `<p class="small muted">Não há outras salas.</p>`}
     </div>`;
   $("#sl-perfil")?.addEventListener("click", () => $("#usr-menu")?.click());
+}
+
+/* ============================================================
+   8.1d RECADOS DAS EQUIPES PARA OS AVALIADORES
+   A equipe só escolhe (frase, opções, emojis, cor e assinatura):
+   o banco guarda números e o texto é montado aqui, então ninguém
+   consegue mandar texto livre. O nome da equipe não aparece.
+   Quem recebe: os avaliadores das salas da equipe e mais 5
+   voluntários sorteados (sorteio fixo).
+   IMPORTANTE: as listas abaixo só podem CRESCER no fim — o banco
+   guarda a posição de cada item.
+   ============================================================ */
+const RECADO_EMOJIS = ["💜", "💚", "💛", "💙", "🤖", "🦕", "🦖", "🦴", "🔍", "⭐", "🌟", "🎉", "🙌", "👏", "😊", "🤩", "🥰", "🌱", "🧩", "🚀", "💡", "🔧", "🏆", "🧱", "🎈", "🌈", "🧠", "🔭", "⛏️", "🗺️"];
+const RECADO_CORES = [["Roxo", "#efe4fb", "#4a2380"], ["Verde", "#dcf3e2", "#17552a"], ["Amarelo", "#fff1c2", "#5e4300"], ["Azul", "#dbe9ff", "#173f75"], ["Rosa", "#ffe0ec", "#7a1f42"]];
+const RECADO_ASSIN = ["Uma equipe animada", "Pequenos exploradores", "Cientistas do futuro", "Uma equipe que ama descobrir", "Construtores de ideias"];
+const RECADO_OPC = {
+  n: ["2", "3", "4", "5", "6", "7", "8", "9", "10"],
+  treino: ["a apresentação", "o protótipo", "o pôster", "o Modelo da Equipe", "cada detalhe"],
+  tem: ["muitas peças LEGO", "um robô", "um motor", "sensores", "muita criatividade"],
+  sente: ["muito animados", "um pouco ansiosos", "orgulhosos", "felizes demais"],
+  parte: ["o robô", "a programação", "o pôster", "o trabalho em equipe", "a pesquisa", "a construção"],
+  ama: ["construir", "descobrir coisas novas", "trabalhar juntos", "fazer perguntas", "programar"],
+  momento: ["a apresentação", "a sala de avaliação", "o Pit", "a Experimentação", "a Atividade de Parceria", "conhecer outras equipes"],
+  saiu: ["muito feliz", "orgulhosa", "inspirada", "com vontade de voltar", "cheia de ideias"],
+};
+const RECADOS = {
+  pre: [
+    ["p1", "Obrigado por virem conhecer o nosso projeto!"],
+    ["p2", "Ficamos muito felizes que vocês vão nos ouvir."],
+    ["p3", "Vocês inspiram a gente a continuar explorando!"],
+    ["p4", "Preparamos tudo com muito carinho para mostrar a vocês."],
+    ["p5", "Obrigado por doarem o seu tempo para a gente aprender."],
+    ["p6", "Estamos um pouquinho nervosos, mas muito animados!"],
+    ["p7", "Mal podemos esperar para contar o que descobrimos!"],
+    ["p8", "Escavamos muitas ideias para mostrar para vocês!"],
+    ["p9", "Obrigado por acreditarem nas crianças!"],
+    ["p10", "Esperamos que vocês se divirtam tanto quanto a gente."],
+    ["p11", "Trabalhamos muito em equipe e queremos mostrar isso!"],
+    ["p12", "Que bom ter vocês com a gente nessa aventura!"],
+    ["p13", "Nossa equipe, com {n} integrantes, está treinando {treino} para mostrar para vocês!"],
+    ["p14", "Nosso projeto tem {tem} e estamos {sente} para mostrar!"],
+    ["p15", "A parte que a gente mais gosta do projeto é {parte}!"],
+    ["p16", "Nossa equipe adora {ama} e quer dividir isso com vocês!"],
+  ],
+  pos: [
+    ["q1", "Obrigado pelas perguntas e pela atenção com a gente!"],
+    ["q2", "Foi muito legal apresentar para vocês!"],
+    ["q3", "Aprendemos muito com vocês."],
+    ["q4", "Vamos continuar explorando, prometemos!"],
+    ["q5", "Obrigado por fazerem o nosso dia tão especial!"],
+    ["q6", "Voltamos para casa cheios de ideias novas!"],
+    ["q7", "O momento que a gente mais gostou foi {momento}!"],
+    ["q8", "Nossa equipe saiu do evento {saiu}!"],
+  ],
+};
+const recadoModelo = (fase, id) => (RECADOS[fase] || []).find((m) => m[0] === id);
+const camposDe = (txt) => [...txt.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+function recadoTexto(r) {
+  const m = recadoModelo(r.fase, r.modelo);
+  if (!m) return "";
+  return m[1].replace(/\{(\w+)\}/g, (x, k) => RECADO_OPC[k]?.[r.campos?.[k] ?? 0] ?? "…");
+}
+function recadoCartao(r, mini) {
+  const cor = RECADO_CORES[r.cor] || RECADO_CORES[0];
+  const em = (r.emojis || []).map((i) => RECADO_EMOJIS[i]).filter(Boolean).join(" ");
+  return `<figure class="rc-card ${mini ? "mini" : ""}" style="background:${cor[1]};color:${cor[2]}">
+    ${em ? `<div class="rc-em">${em}</div>` : ""}
+    <blockquote>${esc(recadoTexto(r))}</blockquote>
+    <figcaption>— ${esc(RECADO_ASSIN[r.assin] || RECADO_ASSIN[0])}</figcaption></figure>`;
+}
+function hojeISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+/* fase da equipe: antes do dia = "pre"; depois do dia = "pos"; no dia, nada */
+function faseRecado(ev) { const h = hojeISO(); return !ev?.date ? "pre" : h < ev.date ? "pre" : h > ev.date ? "pos" : ""; }
+
+/* recados que chegam para mim (voluntário) */
+function recadosParaMim(ev = currentEvent()) {
+  const me = session.user;
+  if (!ev || me?.kind !== "vol") return [];
+  const pessoas = store.all("users").filter((u) => (u.roles?.[ev.id] || []).length);
+  const passou = hojeISO() > (ev.date || "9999");
+  return store.all("recados").filter((r) => r.eventId === ev.id && (r.fase === "pre" || passou)).filter((r) => {
+    const t = store.get("teams", r.teamId);
+    const salas = t ? teamRoomIds(t) : [];
+    if (salas.includes(judgeRoomId(me, ev.id))) return true;
+    const sorteio = pessoas.filter((u) => !salas.includes(judgeRoomId(u, ev.id)))
+      .map((u) => ({ u, k: shaTxt(r.id + "|" + u.cpf) })).sort((a, b) => a.k.localeCompare(b.k)).slice(0, 5);
+    return sorteio.some((x) => x.u.id === me.id);
+  }).sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+}
+function recadosVoluntario() {
+  const lista = recadosParaMim();
+  if (!lista.length) return "";
+  return `<div class="card rc-mural" style="margin-bottom:var(--sp-lg)">
+    <div class="sec-title"><h2>Recados das equipes para você</h2><span class="chip chip-prim">${lista.length}</span></div>
+    <div class="rc-grid">${lista.map((r) => recadoCartao(r, true)).join("")}</div></div>`;
+}
+
+/* ---------- equipe: escolher e enviar o recado ---------- */
+function recadoEquipeHtml(fase) {
+  if (store.backend !== "fb" && store.backend !== "local") return "";
+  const t = session.user;
+  const id = t.id + "__" + fase;
+  const atual = store.get("recados", id);
+  const ed = ui.recado && ui.recado.id === id ? ui.recado : (ui.recado = { id, fase, editando: !atual, modelo: atual?.modelo || "", campos: { ...(atual?.campos || {}) }, emojis: [...(atual?.emojis || [])], cor: atual?.cor ?? 0, assin: atual?.assin ?? 0 });
+  const titulo = fase === "pre" ? "Deixe um recado para os avaliadores" : "Deixe um agradecimento para os avaliadores";
+  if (atual && !ed.editando) {
+    return `<div class="card rc-equipe"><div class="sec-title"><h2>${titulo}</h2><span class="chip chip-ok"><span class="msym">check</span>Enviado</span></div>
+      <div class="rc-envio">${recadoCartao(atual)}</div>
+      <p class="small muted">${fase === "pre" ? "Os avaliadores vão receber este recado. Vocês podem trocar até o dia do evento." : "Os avaliadores vão receber este agradecimento."}</p>
+      <button class="btn btn-out btn-sm" id="rc-trocar"><span class="msym sm">edit</span>Trocar recado</button></div>`;
+  }
+  const sel = (k, v) => `<select class="rc-sel" data-campo="${k}">${RECADO_OPC[k].map((o, i) => `<option value="${i}" ${+v === i ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  const frase = (m) => esc(m[1]).replace(/\{(\w+)\}/g, (x, k) => sel(k, ed.modelo === m[0] ? ed.campos[k] ?? 0 : 0));
+  const prev = ed.modelo ? { fase, ...ed } : null;
+  return `<div class="card rc-equipe">
+    <div class="sec-title"><h2>${titulo}</h2></div>
+    <p class="small muted" style="margin-bottom:var(--sp-md)">Escolham uma frase, enfeitem do jeito de vocês e enviem.</p>
+    <div class="rc-passo">1. A frase</div>
+    <div class="rc-frases">${RECADOS[fase].map((m) => `<label class="rc-frase ${ed.modelo === m[0] ? "on" : ""}"><input type="radio" name="rc-m" value="${m[0]}" ${ed.modelo === m[0] ? "checked" : ""}><span>${frase(m)}</span></label>`).join("")}</div>
+    <div class="rc-passo">2. Até 3 emojis</div>
+    <div class="rc-emojis">${RECADO_EMOJIS.map((e, i) => `<button type="button" class="rc-emoji ${ed.emojis.includes(i) ? "on" : ""}" data-em="${i}" aria-pressed="${ed.emojis.includes(i)}">${e}</button>`).join("")}</div>
+    <div class="rc-passo">3. A cor e a assinatura</div>
+    <div class="row g-sm wrap" style="align-items:center">
+      <div class="rc-cores">${RECADO_CORES.map((c, i) => `<button type="button" class="rc-cor ${ed.cor === i ? "on" : ""}" data-cor="${i}" style="background:${c[1]};color:${c[2]}" title="${c[0]}" aria-label="${c[0]}"></button>`).join("")}</div>
+      <select id="rc-assin" class="rc-sel">${RECADO_ASSIN.map((a, i) => `<option value="${i}" ${ed.assin === i ? "selected" : ""}>— ${esc(a)}</option>`).join("")}</select>
+    </div>
+    ${prev ? `<div class="rc-passo">Assim vai ficar</div><div class="rc-envio">${recadoCartao(prev)}</div>` : ""}
+    <div class="row g-sm" style="margin-top:var(--sp-md)">
+      ${atual ? `<button class="btn btn-text" id="rc-cancel">Cancelar</button>` : ""}
+      <button class="btn btn-fill" id="rc-enviar" ${ed.modelo ? "" : "disabled"}><span class="msym">send</span>Enviar recado</button>
+    </div></div>`;
+}
+function bindRecadoEquipe(redesenha) {
+  const ed = ui.recado;
+  if (!ed) return;
+  $("#rc-trocar")?.addEventListener("click", () => { ed.editando = true; redesenha(); });
+  $("#rc-cancel")?.addEventListener("click", () => { ui.recado = null; redesenha(); });
+  $$("input[name=rc-m]").forEach((r) => r.addEventListener("change", () => { ed.modelo = r.value; ed.campos = {}; redesenha(); }));
+  $$("[data-campo]").forEach((s) => {
+    s.addEventListener("click", (e) => e.stopPropagation());
+    s.addEventListener("change", () => {
+      const m = s.closest(".rc-frase").querySelector("input").value;
+      if (ed.modelo !== m) { ed.modelo = m; ed.campos = {}; }
+      ed.campos[s.dataset.campo] = +s.value;
+      redesenha();
+    });
+  });
+  $$("[data-em]").forEach((b) => b.addEventListener("click", () => {
+    const i = +b.dataset.em;
+    if (ed.emojis.includes(i)) ed.emojis = ed.emojis.filter((x) => x !== i);
+    else if (ed.emojis.length < 3) ed.emojis = [...ed.emojis, i];
+    else return toast("Escolham até 3 emojis.", "info");
+    redesenha();
+  }));
+  $$("[data-cor]").forEach((b) => b.addEventListener("click", () => { ed.cor = +b.dataset.cor; redesenha(); }));
+  $("#rc-assin")?.addEventListener("change", (e) => { ed.assin = +e.target.value; redesenha(); });
+  $("#rc-enviar")?.addEventListener("click", async (e) => {
+    const t = session.user, m = recadoModelo(ed.fase, ed.modelo);
+    if (!m) return;
+    const campos = {};
+    camposDe(m[1]).forEach((k) => { campos[k] = ed.campos[k] ?? 0; });
+    const doc = { teamId: t.id, eventId: t.eventId, baseId: t.baseId || "", fase: ed.fase, modelo: ed.modelo, campos, emojis: ed.emojis, cor: ed.cor, assin: ed.assin, at: nowISO() };
+    e.currentTarget.disabled = true;
+    try {
+      if (store.backend === "fb") await FB.db.doc("recados/" + ed.id).set(doc);
+      store.data.recados = { ...(store.data.recados || {}), [ed.id]: { id: ed.id, ...doc } };
+      ui.recado = null;
+      toast(ed.fase === "pre" ? "Recado enviado! Os avaliadores vão adorar." : "Agradecimento enviado!");
+      redesenha();
+    } catch (err) { toast("Não foi possível enviar: " + fbMsg(err), "err"); e.currentTarget.disabled = false; }
+  });
 }
 
 /* ============================================================
@@ -3177,6 +3374,7 @@ function renderJudgeHome(root) {
       </div>
     </div>
 
+    ${recadosVoluntario()}
     <div class="kpi-grid kpi-4" style="margin-bottom:var(--sp-lg)">
       <div class="kpi"><span class="k">Equipes</span><span class="v">${rows.length}</span><span class="sub">${can.evalOrg() ? "no evento" : "na sua sala"}</span></div>
       <div class="kpi good"><span class="k">Enviadas</span><span class="v">${nSent}</span><span class="sub">por você</span></div>
@@ -3572,13 +3770,15 @@ function renderTeamHome(root) {
   </g>
 </svg>
         <div class="ans-txt">
-          <h2>Estão ansiosos, né? 😄</h2>
+          <h2>Estão ansiosos, né?</h2>
           <p class="ans-cont"><b>${dias === 1 ? "Falta 1 dia" : `Faltam ${dias} dias`}</b> para o ${esc(ev.name).replace(/\bFIRST\b/g, "<i>FIRST</i>")}!</p>
           <p class="muted">Enquanto isso, que tal ensaiar a apresentação mais uma vez, dar um carinho no protótipo e caprichar no pôster? Os avaliadores estão animados para conhecer vocês.</p>
           <p class="small muted">Depois do evento, a Rubrica de Avaliação e os comentários dos avaliadores aparecem aqui, nesta mesma página.</p>
         </div>
       </div>
+      ${recadoEquipeHtml("pre")}
     </div>`;
+    bindRecadoEquipe(() => renderTeamHome(root));
     return;
   }
 
@@ -3592,7 +3792,9 @@ function renderTeamHome(root) {
           : "A organização do evento vai liberar a Rubrica de Avaliação e os comentários dos avaliadores. Quando isso acontecer, eles aparecem aqui, nesta mesma página."}</p>
         <p class="small muted">Esta página se atualiza sozinha.</p>
       </div>
+      ${faseRecado(ev) === "pos" ? `<div class="no-print">${recadoEquipeHtml("pos")}</div>` : ""}
     </div>`;
+    bindRecadoEquipe(() => renderTeamHome(root));
     return;
   }
 
@@ -3601,7 +3803,9 @@ function renderTeamHome(root) {
       <div>Parabéns pela participação no <i>FIRST</i>® LEGO® League Explore! Aqui está a Rubrica de Avaliação da equipe,
       com o resultado de <b>${sent.length} avaliador${sent.length > 1 ? "es" : ""}</b>.</div></div>
     ${teamRubricHTML(sent)}
+    ${faseRecado(ev) === "pos" ? `<div class="no-print" style="margin-top:var(--sp-lg)">${recadoEquipeHtml("pos")}</div>` : ""}
   </div>`;
+  bindRecadoEquipe(() => renderTeamHome(root));
   $("#tm-print")?.addEventListener("click", () => window.print());
 }
 
