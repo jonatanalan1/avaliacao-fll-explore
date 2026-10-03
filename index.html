@@ -1151,7 +1151,7 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .rc-cor.on{border-color:var(--sys-on-surface)}
 .rc-envio{display:flex;justify-content:center;margin:var(--sp-sm) 0}
 .rc-card{margin:0;padding:22px 24px;border-radius:18px;max-width:440px;width:100%;box-shadow:0 6px 18px rgba(0,0,0,.08);transform:rotate(-1deg)}
-.rc-card .rc-em{font-size:28px;margin-bottom:6px;letter-spacing:4px}
+.rc-card .rc-em{font-size:26px;letter-spacing:4px}
 .rc-card blockquote{margin:0;font-size:19px;font-weight:600;line-height:1.35}
 .rc-card figcaption{margin-top:10px;font-size:13px;opacity:.85}
 .rc-card.mini{padding:16px 18px;transform:none}
@@ -1160,6 +1160,19 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .rc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--sp-sm)}
 .rc-grid .rc-card:nth-child(odd){transform:rotate(-.6deg)}
 .rc-grid .rc-card:nth-child(even){transform:rotate(.6deg)}
+.ft-click{cursor:zoom-in;-webkit-user-drag:none;user-select:none;-webkit-touch-callout:none}
+.ft-ed{display:flex;justify-content:center}
+.ft-ed canvas{border-radius:16px;touch-action:none;cursor:grab;background:#111}
+.ft-ver{display:flex;justify-content:center}
+.ft-ver canvas{width:min(320px,80vw);height:auto;aspect-ratio:1;border-radius:20px;user-select:none;-webkit-touch-callout:none}
+.rc-topo{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;min-height:20px}
+.rc-cv{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;border:1.5px solid;border-radius:999px;padding:2px 10px 2px 6px;white-space:nowrap}
+.rc-cv .msym{font-size:16px}
+.rc-cvs{display:flex;flex-wrap:wrap;gap:6px}
+.rc-cvs .chip{cursor:pointer;border:none;font:inherit}
+.rc-assin{line-height:2.4}
+.rc-meus{margin-top:var(--sp-xs)}
+.rc-frase .rc-sel{border:none!important;border-bottom:2px dashed var(--sys-primary)!important;border-radius:0!important;background:transparent!important;color:var(--sys-primary);font-weight:600;padding:0 2px!important;min-height:0!important}
 .pf-sep{border:none;border-top:1px solid var(--sys-outline-variant);margin:var(--sp-md) 0}
 .pp-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .pp-row{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 0;border-top:1px solid var(--sys-outline-variant)}
@@ -1259,7 +1272,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "3.5.0";
+const APP_VERSION = "3.6.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -3023,7 +3036,7 @@ function perfilDe(cpf) { return (cpf && store.data.perfis?.[cpf]) || null; }
 function avatarHtml(u, size = 32) {
   const p = perfilDe(u?.cpf);
   const st = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.36)}px`;
-  return p?.foto ? `<img class="avatar" src="${attr(p.foto)}" alt="" style="${st};object-fit:cover">`
+  return p?.foto ? `<img class="avatar ft-click" src="${attr(p.foto)}" alt="" draggable="false" data-foto="${attr(u.cpf)}" title="Ver a foto" style="${st};object-fit:cover">`
     : `<span class="avatar" style="${st}">${esc(initials(u?.name || "?"))}</span>`;
 }
 function waLink(num, msg) {
@@ -3047,6 +3060,86 @@ function maskTel(v) {
   if (d.length <= 2) return d;
   if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   return `(${d.slice(0, 2)}) ${d.slice(2, d.length - 4)}-${d.slice(-4)}`;
+}
+/* ajustar a foto antes de salvar: arrastar para posicionar e zoom; sai 400×400 */
+function editarFoto(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const V = 280, R = 2;                    /* área visível (px) e densidade do desenho */
+      let z = 1, ox = 0, oy = 0, fim = false;
+      const base = V / Math.min(img.width, img.height);
+      const acabar = (v) => { if (!fim) { fim = true; URL.revokeObjectURL(img.src); resolve(v); } };
+      const prende = () => {                   /* a foto sempre cobre o quadro */
+        const w = img.width * base * z, h = img.height * base * z;
+        ox = Math.max(-(w - V) / 2, Math.min((w - V) / 2, ox));
+        oy = Math.max(-(h - V) / 2, Math.min((h - V) / 2, oy));
+      };
+      const desenha = (ctx, lado, mascara) => {
+        const k = lado / V, w = img.width * base * z * k, h = img.height * base * z * k;
+        ctx.clearRect(0, 0, lado, lado);
+        ctx.drawImage(img, lado / 2 + ox * k - w / 2, lado / 2 + oy * k - h / 2, w, h);
+        if (mascara) {
+          ctx.save(); ctx.fillStyle = "rgba(0,0,0,.45)";
+          ctx.beginPath(); ctx.rect(0, 0, lado, lado); ctx.arc(lado / 2, lado / 2, lado / 2 - 2, 0, Math.PI * 2, true); ctx.fill("evenodd");
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(lado / 2, lado / 2, lado / 2 - 2, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+        }
+      };
+      openModal({
+        title: "Ajustar foto", icon: "crop",
+        body: `<div class="ft-ed"><canvas id="ft-c" width="${V * R}" height="${V * R}" style="width:${V}px;height:${V}px"></canvas></div>
+          <div class="field" style="margin-top:var(--sp-md)"><label for="ft-z">Tamanho</label><input type="range" id="ft-z" min="1" max="3" step="0.01" value="1"></div>
+          <p class="small muted">Arraste a foto para posicionar o rosto no círculo.</p>`,
+        footer: `<button class="btn btn-text" data-close>Cancelar</button><button class="btn btn-fill" data-ok><span class="msym">check</span>Usar esta foto</button>`,
+        onMount: (el, close) => {
+          const c = $("#ft-c", el), ctx = c.getContext("2d");
+          const pinta = () => { prende(); desenha(ctx, V * R, true); };
+          pinta();
+          let arr = null;
+          c.addEventListener("pointerdown", (e) => { arr = { x: e.clientX, y: e.clientY, ox, oy }; c.setPointerCapture(e.pointerId); });
+          c.addEventListener("pointermove", (e) => { if (!arr) return; ox = arr.ox + (e.clientX - arr.x); oy = arr.oy + (e.clientY - arr.y); pinta(); });
+          c.addEventListener("pointerup", () => { arr = null; });
+          c.addEventListener("wheel", (e) => { e.preventDefault(); z = Math.max(1, Math.min(3, z * (e.deltaY < 0 ? 1.06 : 0.94))); $("#ft-z", el).value = z; pinta(); }, { passive: false });
+          $("#ft-z", el).addEventListener("input", (e) => { z = +e.target.value; pinta(); });
+          $("[data-ok]", el).addEventListener("click", () => {
+            const out = document.createElement("canvas"); out.width = out.height = 400;
+            desenha(out.getContext("2d"), 400, false);
+            close(); acabar(out.toDataURL("image/jpeg", 0.82));
+          });
+          $$("[data-close]", el).forEach((b) => b.addEventListener("click", () => acabar(null)));
+          el.addEventListener("mousedown", (ev) => { if (ev.target === el) acabar(null); });
+        },
+      });
+    };
+    img.onerror = () => { toast("Não consegui abrir essa imagem.", "err"); resolve(null); };
+    img.src = URL.createObjectURL(file);
+  });
+}
+/* ver a foto de um colega maior: desenhada (sem "salvar imagem") e com marca d'água de quem vê */
+function verFoto(cpf) {
+  const p = perfilDe(cpf);
+  if (!p?.foto) return;
+  const pessoa = store.all("users").find((u) => u.cpf === cpf);
+  openModal({
+    title: pessoa?.name || "Foto", icon: "account_circle",
+    body: `<div class="ft-ver"><canvas id="ft-v" width="640" height="640"></canvas></div>
+      <p class="small muted" style="text-align:center;margin-top:var(--sp-sm)">Só para os voluntários do evento.</p>`,
+    footer: `<button class="btn btn-text right" data-close>Fechar</button>`,
+    onMount: (el) => {
+      const c = $("#ft-v", el), ctx = c.getContext("2d"), img = new Image();
+      c.addEventListener("contextmenu", (e) => e.preventDefault());
+      c.addEventListener("dragstart", (e) => e.preventDefault());
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, 640, 640);
+        ctx.save(); ctx.translate(320, 320); ctx.rotate(-Math.PI / 6);
+        ctx.font = "600 22px Roboto, sans-serif"; ctx.fillStyle = "rgba(255,255,255,.28)"; ctx.textAlign = "center";
+        const marca = `${session.user?.name || ""} · ${fmtDate(hojeISO())}`;
+        for (let y = -420; y <= 420; y += 90) ctx.fillText(marca, (y / 90) % 2 ? 60 : -60, y);
+        ctx.restore();
+      };
+      img.src = p.foto;
+    },
+  });
 }
 /* reduz a foto para 256×256 (uns 20 KB) antes de guardar */
 function fotoReduzida(file) {
@@ -3110,7 +3203,12 @@ function bindPerfilBox(el, reabrir) {
   $("#pf-foto", el)?.addEventListener("change", async (e) => {
     const f = e.target.files[0];
     if (!f) return;
-    try { await salvarPerfil({ foto: await fotoReduzida(f) }); toast("Foto compartilhada."); reabrir(); }
+    e.target.value = "";
+    try {
+      const foto = await editarFoto(f);
+      if (!foto) return;
+      await salvarPerfil({ foto }); toast("Foto compartilhada."); reabrir();
+    }
     catch (err) { toast("Não foi possível salvar a foto: " + (err.code ? fbMsg(err) : err.message), "err"); }
   });
   $("#pf-foto-rm", el)?.addEventListener("click", async () => {
@@ -3171,17 +3269,25 @@ function renderSala(root) {
 
 /* ============================================================
    8.1d RECADOS DAS EQUIPES PARA OS AVALIADORES
-   A equipe só escolhe (frase, opções, emojis, cor e assinatura):
-   o banco guarda números e o texto é montado aqui, então ninguém
-   consegue mandar texto livre. O nome da equipe não aparece.
-   Quem recebe: os avaliadores das salas da equipe e mais 5
-   voluntários sorteados (sorteio fixo).
-   IMPORTANTE: as listas abaixo só podem CRESCER no fim — o banco
-   guarda a posição de cada item.
+   A equipe só escolhe (frase com lacunas, emojis, Core Value, cor
+   e assinatura): o banco guarda números e o texto é montado aqui,
+   então ninguém consegue mandar texto livre. O nome da equipe não
+   aparece. Até 3 recados por fase (antes / depois do evento), no
+   máximo 1 por dia — conferido também nas regras do banco.
+   Quem recebe cada recado: os avaliadores das salas da equipe e
+   mais 5 voluntários sorteados (sorteio fixo por recado).
+   IMPORTANTE: as listas só podem CRESCER no fim (o banco guarda a
+   posição); para tirar um item, troque por null.
    ============================================================ */
-const RECADO_EMOJIS = ["💜", "💚", "💛", "💙", "🤖", "🦕", "🦖", "🦴", "🔍", "⭐", "🌟", "🎉", "🙌", "👏", "😊", "🤩", "🥰", "🌱", "🧩", "🚀", "💡", "🔧", "🏆", "🧱", "🎈", "🌈", "🧠", "🔭", "⛏️", "🗺️"];
-const RECADO_CORES = [["Roxo", "#efe4fb", "#4a2380"], ["Verde", "#dcf3e2", "#17552a"], ["Amarelo", "#fff1c2", "#5e4300"], ["Azul", "#dbe9ff", "#173f75"], ["Rosa", "#ffe0ec", "#7a1f42"]];
-const RECADO_ASSIN = ["Uma equipe animada", "Pequenos exploradores", "Cientistas do futuro", "Uma equipe que ama descobrir", "Construtores de ideias"];
+const RECADO_EMOJIS = ["💜", "💚", "💛", "💙", "🤖", null, null, "🦴", "🔍", "⭐", "🌟", "🎉", "🙌", "👏", "😊", "🤩", "🥰", "🌱", "🧩", "🚀", "💡", "🔧", "🏆", "🧱", "🎈", "🌈", "🧠", "🔭", "⛏️", "🗺️",
+  "❤️", "🧡", "🩷", "🩵", "🤍", "💖", "💗", "✨", "🌸", "🤝", "💻", "⚙️", "🔌", "🔋", "🛰️", "📡", "🧪", "🔬", "🦾", "🕹️", "🏺", "🪨", "🧭", "🎨"];
+const RECADO_CORES = [["Roxo", "#efe4fb", "#4a2380"], ["Verde", "#dcf3e2", "#17552a"], ["Amarelo", "#fff1c2", "#5e4300"], ["Azul", "#dbe9ff", "#173f75"], ["Rosa", "#ffe0ec", "#7a1f42"], ["Laranja", "#ffe6d2", "#7a3a06"], ["Turquesa", "#d6f4f1", "#0d5650"]];
+const CORE_VALUES = [["Descoberta", "explore"], ["Inovação", "lightbulb"], ["Impacto", "public"], ["Trabalho em Equipe", "groups"], ["Diversão", "celebration"], ["Inclusão", "diversity_3"]];
+const RECADO_ASSIN = [
+  ["Uma equipe", "Uma turma", "Uma galera", "Uma família", "Uma tropa"],
+  ["de pequenos", "de jovens", "de futuros", "de grandes", "cheia de", "de curiosos"],
+  ["cientistas", "exploradores", "inventores", "arqueólogos", "engenheiros", "programadores", "construtores", "sonhadores", "pesquisadores"],
+];
 const RECADO_OPC = {
   n: ["2", "3", "4", "5", "6", "7", "8", "9", "10"],
   treino: ["a apresentação", "o protótipo", "o pôster", "o Modelo da Equipe", "cada detalhe"],
@@ -3191,53 +3297,76 @@ const RECADO_OPC = {
   ama: ["construir", "descobrir coisas novas", "trabalhar juntos", "fazer perguntas", "programar"],
   momento: ["a apresentação", "a sala de avaliação", "o Pit", "a Experimentação", "a Atividade de Parceria", "conhecer outras equipes"],
   saiu: ["muito feliz", "orgulhosa", "inspirada", "com vontade de voltar", "cheia de ideias"],
+  conhecer: ["conhecer o nosso projeto", "ouvir a nossa equipe", "ver o nosso protótipo", "conversar com a gente"],
+  feliz: ["felizes", "animados", "contentes", "orgulhosos"],
+  verbo: ["explorando", "descobrindo", "inventando", "aprendendo", "construindo"],
+  oque: ["tudo", "o protótipo", "o pôster", "a apresentação", "cada detalhe"],
+  tempo: ["a gente aprender", "inspirar a gente", "descobrir com a gente", "ouvir as nossas ideias"],
+  nervo: ["nervosos", "ansiosos", "tímidos"],
+  animo: ["animados", "felizes", "empolgados", "orgulhosos"],
+  contar: ["o que descobrimos", "como construímos", "o que aprendemos", "as nossas ideias"],
+  escav: ["ideias", "descobertas", "perguntas", "histórias"],
+  acredit: ["nas crianças", "na gente", "nas nossas ideias"],
+  div: ["divirtam", "emocionem", "surpreendam"],
+  mostrar: ["isso", "o resultado", "como foi", "o que criamos"],
+  avent: ["aventura", "descoberta", "jornada", "missão"],
+  obrig: ["pelas perguntas", "pelas dicas", "pelo carinho", "pelos sorrisos"],
+  legal: ["legal", "divertido", "especial", "emocionante"],
+  aprend: ["com vocês", "nesse dia", "com as outras equipes"],
+  dia: ["especial", "divertido", "inesquecível", "feliz"],
+  cheios: ["ideias novas", "energia", "histórias", "vontade de voltar"],
 };
+/* {a:lista} e {b:lista} são as lacunas da frase */
 const RECADOS = {
   pre: [
-    ["p1", "Obrigado por virem conhecer o nosso projeto!"],
-    ["p2", "Ficamos muito felizes que vocês vão nos ouvir."],
-    ["p3", "Vocês inspiram a gente a continuar explorando!"],
-    ["p4", "Preparamos tudo com muito carinho para mostrar a vocês."],
-    ["p5", "Obrigado por doarem o seu tempo para a gente aprender."],
-    ["p6", "Estamos um pouquinho nervosos, mas muito animados!"],
-    ["p7", "Mal podemos esperar para contar o que descobrimos!"],
-    ["p8", "Escavamos muitas ideias para mostrar para vocês!"],
-    ["p9", "Obrigado por acreditarem nas crianças!"],
-    ["p10", "Esperamos que vocês se divirtam tanto quanto a gente."],
-    ["p11", "Trabalhamos muito em equipe e queremos mostrar isso!"],
-    ["p12", "Que bom ter vocês com a gente nessa aventura!"],
-    ["p13", "Nossa equipe, com {n} integrantes, está treinando {treino} para mostrar para vocês!"],
-    ["p14", "Nosso projeto tem {tem} e estamos {sente} para mostrar!"],
-    ["p15", "A parte que a gente mais gosta do projeto é {parte}!"],
-    ["p16", "Nossa equipe adora {ama} e quer dividir isso com vocês!"],
+    ["p1", "Obrigado por virem {a:conhecer}!"],
+    ["p2", "Ficamos muito {a:feliz} que vocês vão nos ouvir."],
+    ["p3", "Vocês inspiram a gente a continuar {a:verbo}!"],
+    ["p4", "Preparamos {a:oque} com muito carinho para mostrar a vocês."],
+    ["p5", "Obrigado por doarem o seu tempo para {a:tempo}."],
+    ["p6", "Estamos um pouquinho {a:nervo}, mas muito {b:animo}!"],
+    ["p7", "Mal podemos esperar para contar {a:contar}!"],
+    ["p8", "Escavamos muitas {a:escav} para mostrar para vocês!"],
+    ["p9", "Obrigado por acreditarem {a:acredit}!"],
+    ["p10", "Esperamos que vocês se {a:div} tanto quanto a gente."],
+    ["p11", "Trabalhamos muito em equipe e queremos mostrar {a:mostrar}!"],
+    ["p12", "Que bom ter vocês com a gente nessa {a:avent}!"],
+    ["p13", "Nossa equipe, com {a:n} integrantes, está treinando {b:treino} para mostrar para vocês!"],
+    ["p14", "Nosso projeto tem {a:tem} e estamos {b:sente} para mostrar!"],
+    ["p15", "A parte que a gente mais gosta do projeto é {a:parte}!"],
+    ["p16", "Nossa equipe adora {a:ama} e quer dividir isso com vocês!"],
   ],
   pos: [
-    ["q1", "Obrigado pelas perguntas e pela atenção com a gente!"],
-    ["q2", "Foi muito legal apresentar para vocês!"],
-    ["q3", "Aprendemos muito com vocês."],
-    ["q4", "Vamos continuar explorando, prometemos!"],
-    ["q5", "Obrigado por fazerem o nosso dia tão especial!"],
-    ["q6", "Voltamos para casa cheios de ideias novas!"],
-    ["q7", "O momento que a gente mais gostou foi {momento}!"],
-    ["q8", "Nossa equipe saiu do evento {saiu}!"],
+    ["q1", "Obrigado {a:obrig} e pela atenção com a gente!"],
+    ["q2", "Foi muito {a:legal} apresentar para vocês!"],
+    ["q3", "Aprendemos muito {a:aprend}."],
+    ["q4", "Vamos continuar {a:verbo}, prometemos!"],
+    ["q5", "Obrigado por fazerem o nosso dia tão {a:dia}!"],
+    ["q6", "Voltamos para casa cheios de {a:cheios}!"],
+    ["q7", "O momento que a gente mais gostou foi {a:momento}!"],
+    ["q8", "Nossa equipe saiu do evento {a:saiu}!"],
   ],
 };
+const RECADO_MAX = 3;
 const recadoModelo = (fase, id) => (RECADOS[fase] || []).find((m) => m[0] === id);
-const camposDe = (txt) => [...txt.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+const lacunas = (txt) => [...txt.matchAll(/\{([ab]):(\w+)\}/g)].map((m) => ({ k: m[1], lista: m[2] }));
 function recadoTexto(r) {
   const m = recadoModelo(r.fase, r.modelo);
   if (!m) return "";
-  return m[1].replace(/\{(\w+)\}/g, (x, k) => RECADO_OPC[k]?.[r.campos?.[k] ?? 0] ?? "…");
+  return m[1].replace(/\{([ab]):(\w+)\}/g, (x, k, l) => RECADO_OPC[l]?.[r.campos?.[k] ?? 0] ?? "…");
 }
+const assinTexto = (a) => RECADO_ASSIN.map((lista, i) => lista[(a || [])[i] ?? 0] || lista[0]).join(" ");
 function recadoCartao(r, mini) {
   const cor = RECADO_CORES[r.cor] || RECADO_CORES[0];
   const em = (r.emojis || []).map((i) => RECADO_EMOJIS[i]).filter(Boolean).join(" ");
+  const cv = CORE_VALUES[r.cv];
   return `<figure class="rc-card ${mini ? "mini" : ""}" style="background:${cor[1]};color:${cor[2]}">
-    ${em ? `<div class="rc-em">${em}</div>` : ""}
+    <div class="rc-topo">${em ? `<span class="rc-em">${em}</span>` : "<span></span>"}${cv ? `<span class="rc-cv" style="border-color:${cor[2]}"><span class="msym">${cv[1]}</span>${esc(cv[0])}</span>` : ""}</div>
     <blockquote>${esc(recadoTexto(r))}</blockquote>
-    <figcaption>— ${esc(RECADO_ASSIN[r.assin] || RECADO_ASSIN[0])}</figcaption></figure>`;
+    <figcaption>— ${esc(Array.isArray(r.assin) ? assinTexto(r.assin) : assinTexto([]))}</figcaption></figure>`;
 }
 function hojeISO() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+const diaDe = (iso) => { if (!iso) return ""; const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 /* fase da equipe: antes do dia = "pre"; depois do dia = "pos"; no dia, nada */
 function faseRecado(ev) { const h = hojeISO(); return !ev?.date ? "pre" : h < ev.date ? "pre" : h > ev.date ? "pos" : ""; }
 
@@ -3247,7 +3376,7 @@ function recadosParaMim(ev = currentEvent()) {
   if (!ev || me?.kind !== "vol") return [];
   const pessoas = store.all("users").filter((u) => (u.roles?.[ev.id] || []).length);
   const passou = hojeISO() > (ev.date || "9999");
-  return store.all("recados").filter((r) => r.eventId === ev.id && (r.fase === "pre" || passou)).filter((r) => {
+  return store.all("recados").filter((r) => r.eventId === ev.id && Array.isArray(r.assin) && (r.fase === "pre" || passou)).filter((r) => {
     const t = store.get("teams", r.teamId);
     const salas = t ? teamRoomIds(t) : [];
     if (salas.includes(judgeRoomId(me, ev.id))) return true;
@@ -3264,56 +3393,62 @@ function recadosVoluntario() {
     <div class="rc-grid">${lista.map((r) => recadoCartao(r, true)).join("")}</div></div>`;
 }
 
-/* ---------- equipe: escolher e enviar o recado ---------- */
-function recadoEquipeHtml(fase) {
-  if (store.backend !== "fb" && store.backend !== "local") return "";
+/* ---------- equipe: escolher e enviar (até 3, 1 por dia) ---------- */
+function meusRecados(fase) {
   const t = session.user;
-  const id = t.id + "__" + fase;
-  const atual = store.get("recados", id);
-  const ed = ui.recado && ui.recado.id === id ? ui.recado : (ui.recado = { id, fase, editando: !atual, modelo: atual?.modelo || "", campos: { ...(atual?.campos || {}) }, emojis: [...(atual?.emojis || [])], cor: atual?.cor ?? 0, assin: atual?.assin ?? 0 });
-  const titulo = fase === "pre" ? "Deixe um recado para os avaliadores" : "Deixe um agradecimento para os avaliadores";
-  if (atual && !ed.editando) {
-    return `<div class="card rc-equipe"><div class="sec-title"><h2>${titulo}</h2><span class="chip chip-ok"><span class="msym">check</span>Enviado</span></div>
-      <div class="rc-envio">${recadoCartao(atual)}</div>
-      <p class="small muted">${fase === "pre" ? "Os avaliadores vão receber este recado. Vocês podem trocar até o dia do evento." : "Os avaliadores vão receber este agradecimento."}</p>
-      <button class="btn btn-out btn-sm" id="rc-trocar"><span class="msym sm">edit</span>Trocar recado</button></div>`;
+  return store.all("recados").filter((r) => r.teamId === t.id && r.fase === fase && Array.isArray(r.assin))
+    .sort((a, b) => (a.at || "").localeCompare(b.at || ""));
+}
+function recadoEquipeHtml(fase) {
+  const t = session.user;
+  const meus = meusRecados(fase);
+  const ultimo = meus[meus.length - 1];
+  const hojeJa = ultimo && diaDe(ultimo.at) === hojeISO();
+  const pode = meus.length < RECADO_MAX && !hojeJa;
+  const titulo = fase === "pre" ? "Recados para os avaliadores" : "Agradecimentos para os avaliadores";
+  const enviados = meus.length ? `<div class="rc-grid rc-meus">${meus.map((r) => recadoCartao(r, true)).join("")}</div>` : "";
+  if (!pode) {
+    return `<div class="card rc-equipe"><div class="sec-title"><h2>${titulo}</h2><span class="chip chip-ok"><span class="msym">check</span>${meus.length} de ${RECADO_MAX}</span></div>
+      ${enviados}
+      <p class="small muted" style="margin-top:var(--sp-sm)">${meus.length >= RECADO_MAX ? "Vocês já enviaram os 3 recados. Os avaliadores vão adorar!" : "Recado de hoje enviado! Amanhã vocês podem mandar mais um."}</p></div>`;
   }
-  const sel = (k, v) => `<select class="rc-sel" data-campo="${k}">${RECADO_OPC[k].map((o, i) => `<option value="${i}" ${+v === i ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
-  const frase = (m) => esc(m[1]).replace(/\{(\w+)\}/g, (x, k) => sel(k, ed.modelo === m[0] ? ed.campos[k] ?? 0 : 0));
+  const ed = ui.recado && ui.recado.fase === fase ? ui.recado
+    : (ui.recado = { fase, modelo: "", campos: {}, emojis: [], cor: 0, cv: -1, assin: [0, 0, 0] });
+  const sel = (m, l) => `<select class="rc-sel" data-campo="${l.k}" data-m="${m[0]}">${RECADO_OPC[l.lista].map((o, i) => `<option value="${i}" ${ed.modelo === m[0] && +(ed.campos[l.k] ?? 0) === i ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  const frase = (m) => { const ls = lacunas(m[1]); let i = 0; return esc(m[1]).replace(/\{([ab]):(\w+)\}/g, () => sel(m, ls[i++])); };
   const prev = ed.modelo ? { fase, ...ed } : null;
   return `<div class="card rc-equipe">
-    <div class="sec-title"><h2>${titulo}</h2></div>
-    <p class="small muted" style="margin-bottom:var(--sp-md)">Escolham uma frase, enfeitem do jeito de vocês e enviem.</p>
-    <div class="rc-passo">1. A frase</div>
+    <div class="sec-title"><h2>${titulo}</h2>${meus.length ? `<span class="chip chip-out">${meus.length} de ${RECADO_MAX}</span>` : ""}</div>
+    ${enviados}
+    <p class="small muted" style="margin:var(--sp-sm) 0 var(--sp-md)">${meus.length ? "Que tal mais um? " : ""}Vocês podem mandar até ${RECADO_MAX} recados, um por dia. Escolham a frase, completem do jeito de vocês e enfeitem!</p>
+    <div class="rc-passo">1. A frase (toque nas palavras sublinhadas para trocar)</div>
     <div class="rc-frases">${RECADOS[fase].map((m) => `<label class="rc-frase ${ed.modelo === m[0] ? "on" : ""}"><input type="radio" name="rc-m" value="${m[0]}" ${ed.modelo === m[0] ? "checked" : ""}><span>${frase(m)}</span></label>`).join("")}</div>
-    <div class="rc-passo">2. Até 3 emojis</div>
-    <div class="rc-emojis">${RECADO_EMOJIS.map((e, i) => `<button type="button" class="rc-emoji ${ed.emojis.includes(i) ? "on" : ""}" data-em="${i}" aria-pressed="${ed.emojis.includes(i)}">${e}</button>`).join("")}</div>
-    <div class="rc-passo">3. A cor e a assinatura</div>
-    <div class="row g-sm wrap" style="align-items:center">
-      <div class="rc-cores">${RECADO_CORES.map((c, i) => `<button type="button" class="rc-cor ${ed.cor === i ? "on" : ""}" data-cor="${i}" style="background:${c[1]};color:${c[2]}" title="${c[0]}" aria-label="${c[0]}"></button>`).join("")}</div>
-      <select id="rc-assin" class="rc-sel">${RECADO_ASSIN.map((a, i) => `<option value="${i}" ${ed.assin === i ? "selected" : ""}>— ${esc(a)}</option>`).join("")}</select>
-    </div>
+    <div class="rc-passo">2. Um Core Value</div>
+    <div class="rc-cvs">${[[-1, "Nenhum", "block"], ...CORE_VALUES.map((c, i) => [i, c[0], c[1]])].map(([i, n, ic]) => `<button type="button" class="chip ${ed.cv === i ? "chip-prim" : "chip-out"}" data-cv="${i}"><span class="msym">${ic}</span>${esc(n)}</button>`).join("")}</div>
+    <div class="rc-passo">3. Até 3 emojis</div>
+    <div class="rc-emojis">${RECADO_EMOJIS.map((e, i) => (e ? `<button type="button" class="rc-emoji ${ed.emojis.includes(i) ? "on" : ""}" data-em="${i}" aria-pressed="${ed.emojis.includes(i)}">${e}</button>` : "")).join("")}</div>
+    <div class="rc-passo">4. A cor e a assinatura</div>
+    <div class="rc-cores">${RECADO_CORES.map((c, i) => `<button type="button" class="rc-cor ${ed.cor === i ? "on" : ""}" data-cor="${i}" style="background:${c[1]}" title="${c[0]}" aria-label="${c[0]}"></button>`).join("")}</div>
+    <div class="rc-assin">— ${RECADO_ASSIN.map((lista, k) => `<select class="rc-sel" data-assin="${k}">${lista.map((o, i) => `<option value="${i}" ${ed.assin[k] === i ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`).join(" ")}</div>
     ${prev ? `<div class="rc-passo">Assim vai ficar</div><div class="rc-envio">${recadoCartao(prev)}</div>` : ""}
     <div class="row g-sm" style="margin-top:var(--sp-md)">
-      ${atual ? `<button class="btn btn-text" id="rc-cancel">Cancelar</button>` : ""}
       <button class="btn btn-fill" id="rc-enviar" ${ed.modelo ? "" : "disabled"}><span class="msym">send</span>Enviar recado</button>
+      <span class="small muted">Depois de enviado, não dá para mudar.</span>
     </div></div>`;
 }
 function bindRecadoEquipe(redesenha) {
   const ed = ui.recado;
   if (!ed) return;
-  $("#rc-trocar")?.addEventListener("click", () => { ed.editando = true; redesenha(); });
-  $("#rc-cancel")?.addEventListener("click", () => { ui.recado = null; redesenha(); });
   $$("input[name=rc-m]").forEach((r) => r.addEventListener("change", () => { ed.modelo = r.value; ed.campos = {}; redesenha(); }));
   $$("[data-campo]").forEach((s) => {
     s.addEventListener("click", (e) => e.stopPropagation());
     s.addEventListener("change", () => {
-      const m = s.closest(".rc-frase").querySelector("input").value;
-      if (ed.modelo !== m) { ed.modelo = m; ed.campos = {}; }
+      if (ed.modelo !== s.dataset.m) { ed.modelo = s.dataset.m; ed.campos = {}; }
       ed.campos[s.dataset.campo] = +s.value;
       redesenha();
     });
   });
+  $$("[data-cv]").forEach((b) => b.addEventListener("click", () => { ed.cv = +b.dataset.cv; redesenha(); }));
   $$("[data-em]").forEach((b) => b.addEventListener("click", () => {
     const i = +b.dataset.em;
     if (ed.emojis.includes(i)) ed.emojis = ed.emojis.filter((x) => x !== i);
@@ -3322,21 +3457,24 @@ function bindRecadoEquipe(redesenha) {
     redesenha();
   }));
   $$("[data-cor]").forEach((b) => b.addEventListener("click", () => { ed.cor = +b.dataset.cor; redesenha(); }));
-  $("#rc-assin")?.addEventListener("change", (e) => { ed.assin = +e.target.value; redesenha(); });
+  $$("[data-assin]").forEach((s) => s.addEventListener("change", () => { ed.assin[+s.dataset.assin] = +s.value; redesenha(); }));
   $("#rc-enviar")?.addEventListener("click", async (e) => {
     const t = session.user, m = recadoModelo(ed.fase, ed.modelo);
     if (!m) return;
+    const n = meusRecados(ed.fase).length + 1;
+    if (n > RECADO_MAX) return;
     const campos = {};
-    camposDe(m[1]).forEach((k) => { campos[k] = ed.campos[k] ?? 0; });
-    const doc = { teamId: t.id, eventId: t.eventId, baseId: t.baseId || "", fase: ed.fase, modelo: ed.modelo, campos, emojis: ed.emojis, cor: ed.cor, assin: ed.assin, at: nowISO() };
+    lacunas(m[1]).forEach((l) => { campos[l.k] = ed.campos[l.k] ?? 0; });
+    const id = `${t.id}__${ed.fase}__${n}`;
+    const doc = { teamId: t.id, eventId: t.eventId, baseId: t.baseId || "", fase: ed.fase, modelo: ed.modelo, campos, emojis: ed.emojis, cor: ed.cor, cv: ed.cv, assin: ed.assin.slice(0, 3), at: nowISO() };
     e.currentTarget.disabled = true;
     try {
-      if (store.backend === "fb") await FB.db.doc("recados/" + ed.id).set(doc);
-      store.data.recados = { ...(store.data.recados || {}), [ed.id]: { id: ed.id, ...doc } };
+      if (store.backend === "fb") await FB.db.doc("recados/" + id).set({ ...doc, criado: firebase.firestore.FieldValue.serverTimestamp() });
+      store.data.recados = { ...(store.data.recados || {}), [id]: { id, ...doc } };
       ui.recado = null;
       toast(ed.fase === "pre" ? "Recado enviado! Os avaliadores vão adorar." : "Agradecimento enviado!");
       redesenha();
-    } catch (err) { toast("Não foi possível enviar: " + fbMsg(err), "err"); e.currentTarget.disabled = false; }
+    } catch (err) { toast("Não foi possível enviar: " + (/permission/.test(err.code || "") ? "o recado de hoje já foi enviado" : fbMsg(err)), "err"); e.currentTarget.disabled = false; }
   });
 }
 
@@ -6491,6 +6629,11 @@ function render() {
   } catch (e) { /* ignora */ }
 })();
 
+document.addEventListener("click", (e) => {
+  const f = e.target.closest?.("[data-foto]");
+  if (f && !f.closest("#usr-menu")) { e.preventDefault(); e.stopPropagation(); verFoto(f.dataset.foto); }
+}, true);
+document.addEventListener("contextmenu", (e) => { if (e.target.closest?.("[data-foto], #ft-v")) e.preventDefault(); });
 async function boot() {
   $("#app-version").textContent = "v" + APP_VERSION;
   render();
