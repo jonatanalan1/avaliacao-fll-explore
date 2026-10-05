@@ -1173,6 +1173,20 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .rc-assin{line-height:2.4}
 .rc-meus{margin-top:var(--sp-xs)}
 .rc-frase .rc-sel{border:none!important;border-bottom:2px dashed var(--sys-primary)!important;border-radius:0!important;background:transparent!important;color:var(--sys-primary);font-weight:600;padding:0 2px!important;min-height:0!important}
+.rc-par{display:flex;flex-direction:column;gap:8px;min-width:0}
+.rc-resp-btn{align-self:flex-start}
+.rc-respondi{display:flex;flex-direction:column;gap:4px;color:var(--sys-primary);font-weight:600}
+.pt-cont{display:flex}
+.pt-lista{display:flex;flex-wrap:wrap;gap:10px;padding:4px 2px}
+.pt-note{width:170px;min-height:110px;padding:12px 12px 10px;background:#fff59d;color:#4a3b00;box-shadow:0 4px 10px rgba(0,0,0,.12);transform:rotate(var(--rot,0deg));border-radius:2px 2px 10px 2px;position:relative;font-weight:400}
+.pt-note::before{content:"";position:absolute;top:-7px;left:50%;width:46px;height:14px;margin-left:-23px;background:rgba(255,255,255,.55);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.pt-note .pt-em{font-size:18px;margin-bottom:4px}
+.pt-note p{margin:0;font-size:14px;line-height:1.35;font-weight:600}
+.pt-note span{display:block;margin-top:6px;font-size:11px;opacity:.75}
+.pt-espera{margin:0}
+.rp-orig{display:flex;justify-content:center;margin-bottom:var(--sp-sm)}
+.rp-prev{margin-top:var(--sp-md)}
+.rc-meus .rc-par{grid-column:1/-1}
 .pf-sep{border:none;border-top:1px solid var(--sys-outline-variant);margin:var(--sp-md) 0}
 .pp-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .pp-row{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 0;border-top:1px solid var(--sys-outline-variant)}
@@ -1272,7 +1286,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "3.6.0";
+const APP_VERSION = "3.7.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1612,7 +1626,7 @@ function gasError(e) {
    ------------------------------------------------------------ */
 const NACIONAL_CPFS = ["11111111111", "05160542957"];   /* os mesmos das regras do Firestore */
 const FB_DOMINIO = "fllexplore.app";                     /* só dá nome às contas; nenhum e-mail é enviado */
-const FB_COL_EVENTO = ["teams", "rooms", "evaluations", "settings", "deliberation", "recados"];
+const FB_COL_EVENTO = ["teams", "rooms", "evaluations", "settings", "deliberation", "recados", "respostas"];
 function isFb() { return !!(typeof FIREBASE_CONFIG !== "undefined" && FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey) && !isGas(); }
 /* modo com servidor (Google ou Firebase): base central, login no servidor */
 function srv() { return store.backend === "gas" || store.backend === "fb"; }
@@ -1770,6 +1784,7 @@ const FB = {
       espera.push(this._assina(L, "settings", "lib", db.collection("liberacoes"), (x) => ({ id: x.eventId || x.id, released: !!x.released })));
       espera.push(this._assina(L, "evaluations", "dev", db.collection("devolutivas").where("baseId", "==", who.baseId)));
       espera.push(this._assina(L, "recados", "meus", db.collection("recados").where("baseId", "==", who.baseId)));
+      espera.push(this._assina(L, "respostas", "minhas", db.collection("respostas").where("baseId", "==", who.baseId)));
       await Promise.all(espera);
       return;
     }
@@ -2034,7 +2049,7 @@ const LS_KEY = "explore.v2";
 const store = {
   mode: "local",
   db: null,
-  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {}, recados: {} },
+  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {}, recados: {}, respostas: {} },
   listeners: new Set(),
   ready: false,
 
@@ -3390,8 +3405,113 @@ function recadosVoluntario() {
   if (!lista.length) return "";
   return `<div class="card rc-mural" style="margin-bottom:var(--sp-lg)">
     <div class="sec-title"><h2>Recados das equipes para você</h2><span class="chip chip-prim">${lista.length}</span></div>
-    <div class="rc-grid">${lista.map((r) => recadoCartao(r, true)).join("")}</div></div>`;
+    <div class="rc-grid">${lista.map((r) => {
+      const minha = minhaResposta(r.id);
+      return `<div class="rc-par">${recadoCartao(r, true)}
+        ${minha ? `<div class="rc-respondi"><span class="small">Você respondeu 💜</span>${postit(minha)}</div>`
+          : `<button class="btn btn-tonal btn-sm rc-resp-btn" data-responder="${attr(r.id)}"><span class="msym sm">reply</span>Responder</button>`}</div>`;
+    }).join("")}</div></div>`;
 }
+
+/* ---------- respostas dos voluntários aos recados (anônimas, só escolhas) ---------- */
+const RESPOSTAS = {
+  r: [
+    ["r1", "Obrigado pelo recado, equipe! Adorei!"],
+    ["r2", "Vocês já praticam muito os Core Values!"],
+    ["r3", "Estou muito animado(a) para conhecer o projeto de vocês!"],
+    ["r4", "Que recado mais lindo! Fiquei feliz demais!"],
+    ["r5", "Mal posso esperar para ver o que vocês descobriram!"],
+    ["r6", "Vocês já me inspiram!"],
+    ["r7", "Vai ser uma honra ouvir vocês!"],
+    ["r8", "Respirem fundo e se divirtam: vai dar tudo certo!"],
+    ["r9", "Continuem curiosos e explorando sempre!"],
+    ["r10", "Que orgulho de vocês!"],
+  ],
+  s: [
+    ["s1", "Obrigado pelo recado, equipe! Adorei!"],
+    ["s2", "Vocês praticaram muito os Core Values!"],
+    ["s3", "Adorei conhecer o projeto de vocês!"],
+    ["s4", "Que recado mais lindo! Fiquei feliz demais!"],
+    ["s5", "Amei ver o que vocês descobriram!"],
+    ["s6", "Vocês me inspiraram!"],
+    ["s7", "Foi uma honra ouvir vocês!"],
+    ["s8", "Vocês respiraram fundo e arrasaram!"],
+    ["s9", "Continuem curiosos e explorando sempre!"],
+    ["s10", "Que orgulho de vocês!"],
+    ["s11", "Foi um prazer conhecer vocês!"],
+    ["s12", "Vocês arrasaram!"],
+    ["s13", "Aprendi muito com vocês também!"],
+    ["s14", "Nunca parem de explorar!"],
+  ],
+};
+const RESP_ASSIN = "Um(a) voluntário(a) do evento";
+const respostaTexto = (p) => (RESPOSTAS[p.modelo?.[0]] || []).find((m) => m[0] === p.modelo)?.[1] || "";
+const respostasDe = (recadoId) => store.all("respostas").filter((p) => p.recadoId === recadoId && respostaTexto(p)).sort((a, b) => (a.at || "").localeCompare(b.at || ""));
+const meuUid = () => (store.backend === "fb" ? FB.auth?.currentUser?.uid : session.user?.id) || "";
+const minhaResposta = (recadoId) => store.get("respostas", recadoId + "__" + meuUid());
+function postit(p, i = 0) {
+  const em = (p.emojis || []).map((k) => RECADO_EMOJIS[k]).filter(Boolean).join(" ");
+  return `<div class="pt-note" style="--rot:${[-2, 1.5, -1, 2][i % 4]}deg">${em ? `<div class="pt-em">${em}</div>` : ""}<p>${esc(respostaTexto(p))}</p><span>— ${RESP_ASSIN}</span></div>`;
+}
+/* recado + respostas, no estilo post-it (tela da equipe) */
+function recadoComRespostas(r) {
+  const rs = respostasDe(r.id);
+  return `<div class="rc-par">${recadoCartao(r, true)}
+    ${rs.length ? `<div class="pt-cont"><span class="chip chip-prim"><span class="msym">favorite</span>${rs.length === 1 ? "1 voluntário respondeu!" : `${rs.length} voluntários responderam!`}</span></div>
+      <div class="pt-lista">${rs.map(postit).join("")}</div>` : `<p class="small muted pt-espera">Ainda sem respostas. Os voluntários vão ver o recado de vocês!</p>`}</div>`;
+}
+/* voluntário: escolher a resposta */
+function responderModal(recadoId) {
+  const r = store.get("recados", recadoId);
+  if (!r || minhaResposta(recadoId)) return;
+  const ev = currentEvent();
+  const lista = hojeISO() > (ev?.date || "9999") ? RESPOSTAS.s : RESPOSTAS.r;
+  const st = { modelo: "", emojis: [] };
+  openModal({
+    title: "Responder ao recado", icon: "reply", size: "wide",
+    body: `<div class="rp-orig">${recadoCartao(r, true)}</div>
+      <div class="rc-passo">Sua resposta</div>
+      <div class="rc-frases" id="rp-frases">${lista.map((m) => `<label class="rc-frase"><input type="radio" name="rp-m" value="${m[0]}"><span>${esc(m[1])}</span></label>`).join("")}</div>
+      <div class="rc-passo">Até 3 emojis</div>
+      <div class="rc-emojis" id="rp-em">${RECADO_EMOJIS.map((e, i) => (e ? `<button type="button" class="rc-emoji" data-rpem="${i}">${e}</button>` : "")).join("")}</div>
+      <div id="rp-prev" class="rp-prev"></div>
+      <p class="small muted">A resposta é anônima: a equipe não vê o seu nome.</p>`,
+    footer: `<button class="btn btn-text" data-close>Cancelar</button><button class="btn btn-fill" data-ok disabled><span class="msym">send</span>Enviar resposta</button>`,
+    onMount: (el, close) => {
+      const ok = $("[data-ok]", el);
+      const prev = () => {
+        $("#rp-prev", el).innerHTML = st.modelo ? `<div class="pt-lista">${postit({ modelo: st.modelo, emojis: st.emojis })}</div>` : "";
+        ok.disabled = !st.modelo;
+        $$("[data-rpem]", el).forEach((b) => b.classList.toggle("on", st.emojis.includes(+b.dataset.rpem)));
+        $$(".rc-frase", el).forEach((l) => l.classList.toggle("on", l.querySelector("input").checked));
+      };
+      $$("input[name=rp-m]", el).forEach((i) => i.addEventListener("change", () => { st.modelo = i.value; prev(); }));
+      $$("[data-rpem]", el).forEach((b) => b.addEventListener("click", () => {
+        const i = +b.dataset.rpem;
+        if (st.emojis.includes(i)) st.emojis = st.emojis.filter((x) => x !== i);
+        else if (st.emojis.length < 3) st.emojis = [...st.emojis, i];
+        else return toast("Até 3 emojis.", "info");
+        prev();
+      }));
+      ok.addEventListener("click", async () => {
+        const id = recadoId + "__" + meuUid();
+        const doc = { recadoId, eventId: r.eventId, baseId: r.baseId || "", modelo: st.modelo, emojis: st.emojis, at: nowISO() };
+        ok.disabled = true;
+        try {
+          if (store.backend === "fb") await FB.db.doc("respostas/" + id).set({ ...doc, criado: firebase.firestore.FieldValue.serverTimestamp() });
+          store.data.respostas = { ...(store.data.respostas || {}), [id]: { id, ...doc } };
+          close();
+          toast("Resposta enviada! A equipe vai amar.");
+          render();
+        } catch (err) { toast("Não foi possível responder: " + fbMsg(err), "err"); ok.disabled = false; }
+      });
+    },
+  });
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest?.("[data-responder]");
+  if (b) responderModal(b.dataset.responder);
+});
 
 /* ---------- equipe: escolher e enviar (até 3, 1 por dia) ---------- */
 function meusRecados(fase) {
@@ -3406,7 +3526,7 @@ function recadoEquipeHtml(fase) {
   const hojeJa = ultimo && diaDe(ultimo.at) === hojeISO();
   const pode = meus.length < RECADO_MAX && !hojeJa;
   const titulo = fase === "pre" ? "Recados para os avaliadores" : "Agradecimentos para os avaliadores";
-  const enviados = meus.length ? `<div class="rc-grid rc-meus">${meus.map((r) => recadoCartao(r, true)).join("")}</div>` : "";
+  const enviados = meus.length ? `<div class="rc-grid rc-meus">${meus.map(recadoComRespostas).join("")}</div>` : "";
   if (!pode) {
     return `<div class="card rc-equipe"><div class="sec-title"><h2>${titulo}</h2><span class="chip chip-ok"><span class="msym">check</span>${meus.length} de ${RECADO_MAX}</span></div>
       ${enviados}
