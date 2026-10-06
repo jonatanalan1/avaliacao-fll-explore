@@ -1187,6 +1187,20 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .rp-orig{display:flex;justify-content:center;margin-bottom:var(--sp-sm)}
 .rp-prev{margin-top:var(--sp-md)}
 .rc-meus .rc-par{grid-column:1/-1}
+.pc-card{margin-bottom:var(--sp-lg);border:2px solid var(--sys-primary)}
+.pc-card h2{margin-bottom:var(--sp-xs)}
+.pc-passo{font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--sys-primary);margin-bottom:4px}
+.pc-lista{display:flex;flex-direction:column;gap:8px;margin:var(--sp-md) 0}
+.pc-linha{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 12px;border:1px solid var(--sys-outline-variant);border-radius:12px}
+.pc-linha span{flex:1;font-weight:600}
+.pc-linha input{width:90px!important;text-align:center;font-weight:700}
+.pc-total{font-weight:700;font-size:18px;text-align:right}
+.pc-total.ok{color:var(--sys-success)}
+.pc-total.bad{color:var(--sys-critical)}
+.pc-feito{display:flex;gap:var(--sp-sm);align-items:center;border:1px solid var(--sys-outline-variant)}
+.pc-feito .msym{color:var(--sys-success);font-size:28px}
+.pc-card .q{display:block;font-weight:600;margin:var(--sp-sm) 0}
+.pc-modos{display:flex;flex-direction:column;gap:6px}
 .pf-sep{border:none;border-top:1px solid var(--sys-outline-variant);margin:var(--sp-md) 0}
 .pp-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .pp-row{display:flex;align-items:center;gap:var(--sp-sm);padding:10px 0;border-top:1px solid var(--sys-outline-variant)}
@@ -1286,7 +1300,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "3.7.0";
+const APP_VERSION = "3.8.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1785,6 +1799,8 @@ const FB = {
       espera.push(this._assina(L, "evaluations", "dev", db.collection("devolutivas").where("baseId", "==", who.baseId)));
       espera.push(this._assina(L, "recados", "meus", db.collection("recados").where("baseId", "==", who.baseId)));
       espera.push(this._assina(L, "respostas", "minhas", db.collection("respostas").where("baseId", "==", who.baseId)));
+      espera.push(this._assina(L, "parcerias", "minha", db.collection("parcerias").where("baseId", "==", who.baseId)));
+      espera.push(this._assina(L, "parceria_cfg", "todas", db.collection("parceria_cfg")));
       await Promise.all(espera);
       return;
     }
@@ -1843,7 +1859,8 @@ const FB = {
     const espera = [];
     evs.filter((ev) => !this._evUnsubs[ev]).forEach((ev) => {
       const L = (this._evUnsubs[ev] = []);
-      FB_COL_EVENTO.forEach((col) => {
+      const org = ev === "*" || (u?.roles?.[ev] || []).some((r) => r === "regional" || r === "lider");
+      [...FB_COL_EVENTO, "parceria_cfg", ...(org ? ["parcerias"] : [])].forEach((col) => {
         const q = ev === "*" ? db.collection(col) : db.collection(col).where("eventId", "==", ev);
         espera.push(this._assina(L, col, ev, q));
       });
@@ -2049,7 +2066,7 @@ const LS_KEY = "explore.v2";
 const store = {
   mode: "local",
   db: null,
-  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {}, recados: {}, respostas: {} },
+  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {}, recados: {}, respostas: {}, parcerias: {}, parceria_cfg: {} },
   listeners: new Set(),
   ready: false,
 
@@ -2745,6 +2762,7 @@ function navTabs() {
   const t = [];
   if (can.judge()) t.push({ id: "avaliar", icon: "rate_review", label: "Avaliar" });
   if (can.nac() || myRoles().length) t.push({ id: "sala", icon: "diversity_3", label: "Sala" });
+  if (podeParceria()) t.push({ id: "parceria", icon: "handshake", label: "Parceria" });
   if (cronoCfg() && (can.nac() || myRoles().length)) t.push({ id: "cronograma", icon: "schedule", label: "Cronograma" });
   if (can.evalOrg()) t.push({ id: "painel", icon: "dashboard", label: "Painel" }, { id: "delib", icon: "gavel", label: "Deliberação" }, { id: "nivel", icon: "balance", label: "Nivelamento" });
   if (can.people()) t.push({ id: "voluntarios", icon: "badge", label: "Voluntários" }, { id: "equipes", icon: "groups", label: "Equipes" }, { id: "salas", icon: "meeting_room", label: "Salas" });
@@ -2809,6 +2827,7 @@ function viewApp() {
   if (tab === "salas") return renderRooms(root);
   if (tab === "cronograma") return renderCrono(root);
   if (tab === "sala") return renderSala(root);
+  if (tab === "parceria") return renderParceria(root);
 }
 
 /* ============================================================
@@ -3599,6 +3618,195 @@ function bindRecadoEquipe(redesenha) {
 }
 
 /* ============================================================
+   8.1e FORMULÁRIO DE PARCERIA
+   Cada equipe avalia as equipes com quem interagiu (tabela abaixo,
+   a mesma do formulário original): distribui 13 pontos, mínimo 2
+   por equipe, e escolhe uma equipe de destaque (Coopertition e
+   Gracious Professionalism). Uma resposta por equipe.
+   A Liderança/Operação libera: fechado, aberto ou programado.
+   Equipes identificadas pelo número do cronograma (1 a 40).
+   ============================================================ */
+const PARC_PTS = 13, PARC_MIN = 2;
+const PARC_EQUIPES = { 1: "CYBERZUKAS EXPLORADOREES", 2: "Derby Conecta", 3: "Sandoca Salto Futuro", 4: "ESCAVAMENTES", 5: "CYBERZUKAS INVENTORES", 6: "MT - Exploradores do Tempo", 7: "Space Bots Kids", 8: "LUBOTICS", 9: "EM BUSCA DO PASSADO", 10: "Descobridores", 11: "Os Exploradores do Futuro", 12: "ICBEU RoboMakers", 13: "Tecnoway", 14: "ArqueGondim Makers", 15: "TechNova", 16: "CSITECH", 17: "Legoowls", 18: "Belobots", 19: "INOVATECH", 20: "Rabbitech", 21: "Explore Ground", 22: "GOLDEN BOTS", 23: "BA - Exploradores do Tempo", 24: "Archaeological Animals", 25: "Sandoca Bit Escava", 26: "Roboterrâneos", 27: "Magic Robots", 28: "Jurassic lego", 29: "ARQUEO BLOCKS", 30: "DHELEGO", 31: "LEGO Engineers", 32: "Evolution Bots", 33: "Mistério Magnético", 34: "Max Tec Jr", 35: "Curumim Tech", 36: "Lobato Que Transforma", 37: "LOBÓTICOS", 38: "CEL Little Bots", 39: "INTERDROIDS", 40: "Complebots" };
+const PARC_MAPA = { 1: [2, 3, 4, 6], 2: [1, 4, 5, 6], 3: [1, 4, 5, 6], 4: [1, 2, 3, 5], 5: [2, 3, 4, 6], 6: [1, 2, 3, 5], 7: [8, 10, 11, 12], 8: [7, 9, 10, 11], 9: [8, 10, 11, 12], 10: [7, 8, 9, 12], 11: [7, 8, 9, 12], 12: [7, 9, 10, 11], 13: [14, 15, 16, 18], 14: [13, 16, 17, 18], 15: [13, 16, 17, 18], 16: [13, 14, 15, 17], 17: [14, 15, 16, 18], 18: [13, 14, 15, 17], 19: [20, 22, 23, 24], 20: [19, 21, 22, 23], 21: [20, 22, 23, 24], 22: [19, 20, 21, 24], 23: [19, 20, 21, 24], 24: [19, 21, 22, 23], 25: [26, 28, 29, 30], 26: [25, 27, 28, 29], 27: [26, 28, 29, 30], 28: [25, 26, 27, 30], 29: [25, 26, 27, 30], 30: [25, 27, 28, 29], 31: [32, 33, 34, 36], 32: [31, 34, 35, 36], 33: [31, 34, 35, 36], 34: [31, 32, 33, 35], 35: [32, 33, 34, 36], 36: [31, 32, 33, 35], 37: [38, 39, 40], 38: [37, 39, 40], 39: [37, 38, 40], 40: [37, 38, 39] };
+const parcNumero = (nome) => +(Object.entries(PARC_EQUIPES).find(([, n]) => norm(n) === norm(nome))?.[0] || 0);
+const parcNome = (n) => PARC_EQUIPES[n] || "Equipe " + n;
+const tsMs = (x) => (x && typeof x.toMillis === "function" ? x.toMillis() : x?.seconds ? x.seconds * 1000 : Date.parse(x || "") || 0);
+const parcCfg = (evId = session.eventId) => store.get("parceria_cfg", evId) || { modo: "fechado" };
+function parcAberto(cfg) { return cfg.modo === "aberto" || (cfg.modo === "programado" && cfg.abreEm && Date.now() >= tsMs(cfg.abreEm)); }
+const podeParceria = () => can.nac() || myRoles().some((r) => r === "regional" || r === "lider");
+
+/* ---------- equipe ---------- */
+function parceriaEquipeHtml() {
+  const t = session.user;
+  const num = parcNumero(t.name);
+  if (!num || !PARC_MAPA[num]) return "";
+  const minha = store.get("parcerias", t.id);
+  if (minha) return `<div class="card pc-card pc-feito"><span class="msym">task_alt</span><div><b>Avaliação das parcerias enviada</b><br><span class="small muted">Obrigado! Cada equipe responde uma vez só.</span></div></div>`;
+  const pcfg = parcCfg(t.eventId);
+  if (!parcAberto(pcfg)) {
+    /* programado: a página aberta mostra o formulário sozinha na hora marcada */
+    const falta = pcfg.modo === "programado" ? tsMs(pcfg.abreEm) - Date.now() : 0;
+    clearTimeout(ui.parcTimer);
+    if (falta > 0 && falta < 2 ** 31) ui.parcTimer = setTimeout(() => { if (session.user?.kind === "team") render(); }, falta + 500);
+    return "";
+  }
+  const parc = PARC_MAPA[num];
+  const st = ui.parc && ui.parc.num === num ? ui.parc : (ui.parc = { num, passo: 1, pts: {}, destaque: "" });
+  const soma = parc.reduce((a, n) => a + (+st.pts[n] || 0), 0);
+  if (st.passo === 1) {
+    return `<div class="card pc-card"><div class="pc-passo">Página 1 de 2</div>
+      <h2>Avaliação das parcerias</h2>
+      <p class="muted">Distribuam <b>${PARC_PTS} pontos</b> entre as equipes com quem vocês fizeram parceria (mínimo de ${PARC_MIN} para cada).</p>
+      <div class="pc-lista">${parc.map((n) => `<label class="pc-linha"><span>${esc(parcNome(n))}</span>
+        <input type="number" min="${PARC_MIN}" max="${PARC_PTS - PARC_MIN * (parc.length - 1)}" step="1" inputmode="numeric" data-pc="${n}" value="${st.pts[n] ?? ""}" placeholder="0"></label>`).join("")}</div>
+      <div class="pc-total ${soma === PARC_PTS ? "ok" : "bad"}" id="pc-tot">Total: ${soma} / ${PARC_PTS}</div>
+      <div id="pc-err" class="banner crit small" hidden><span class="msym">error</span><span></span></div>
+      <div class="row" style="justify-content:flex-end;margin-top:var(--sp-md)"><button class="btn btn-fill" id="pc-prox">Próxima<span class="msym">arrow_forward</span></button></div></div>`;
+  }
+  const opcoes = Object.keys(PARC_EQUIPES).map(Number).filter((n) => n !== num && !parc.includes(n)).sort((a, b) => parcNome(a).localeCompare(parcNome(b), "pt-BR", { sensitivity: "base" }));
+  return `<div class="card pc-card"><div class="pc-passo">Página 2 de 2</div>
+    <h2>Equipe de destaque</h2>
+    <label class="q" for="pc-dest">Escolha uma equipe que se destacou durante o evento, levando em conta o <i>Coopertition</i> e o <i>Gracious Professionalism</i>:</label>
+    <select id="pc-dest"><option value="">Selecione uma equipe</option>${opcoes.map((n) => `<option value="${n}" ${+st.destaque === n ? "selected" : ""}>${esc(parcNome(n))}</option>`).join("")}</select>
+    <div id="pc-err" class="banner crit small" hidden><span class="msym">error</span><span></span></div>
+    <div class="row" style="justify-content:space-between;margin-top:var(--sp-md)"><button class="btn btn-text" id="pc-volta"><span class="msym">arrow_back</span>Voltar</button>
+    <button class="btn btn-fill" id="pc-enviar"><span class="msym">send</span>Enviar</button></div></div>`;
+}
+function bindParceriaEquipe(redesenha) {
+  const st = ui.parc;
+  if (!st) return;
+  const parc = PARC_MAPA[st.num] || [];
+  const erro = (m) => { const b = $("#pc-err"); if (b) { b.hidden = !m; $("span:last-child", b).textContent = m || ""; } };
+  const total = () => { const s = parc.reduce((a, n) => a + (+st.pts[n] || 0), 0); const el = $("#pc-tot"); if (el) { el.textContent = `Total: ${s} / ${PARC_PTS}`; el.className = "pc-total " + (s === PARC_PTS ? "ok" : "bad"); } };
+  /* nunca passa de 13: reserva o mínimo de 2 para quem ainda não recebeu nota */
+  $$("[data-pc]").forEach((inp) => inp.addEventListener("input", () => {
+    if (inp.value === "") { delete st.pts[inp.dataset.pc]; return total(); }
+    let v = Math.floor(Number(inp.value)); if (isNaN(v) || v < 0) v = 0;
+    const reservado = parc.filter((n) => String(n) !== inp.dataset.pc).reduce((a, n) => a + Math.max(PARC_MIN, +st.pts[n] || 0), 0);
+    const teto = PARC_PTS - reservado;
+    if (v > teto) v = Math.max(teto, 0);
+    inp.value = v; st.pts[inp.dataset.pc] = v; total(); erro("");
+  }));
+  $("#pc-prox")?.addEventListener("click", () => {
+    const v = parc.map((n) => st.pts[n]);
+    if (v.some((x) => !Number.isInteger(x) || x < PARC_MIN)) return erro(`Cada equipe deve receber um número inteiro de pontos, no mínimo ${PARC_MIN}.`);
+    if (v.reduce((a, b) => a + b, 0) !== PARC_PTS) return erro(`A soma dos pontos deve ser exatamente ${PARC_PTS}.`);
+    st.passo = 2; redesenha();
+  });
+  $("#pc-volta")?.addEventListener("click", () => { st.passo = 1; redesenha(); });
+  $("#pc-dest")?.addEventListener("change", (e) => { st.destaque = e.target.value; erro(""); });
+  $("#pc-enviar")?.addEventListener("click", async (e) => {
+    if (!st.destaque) return erro("Escolha a equipe de destaque.");
+    const t = session.user;
+    const doc = { teamId: t.id, eventId: t.eventId, baseId: t.baseId || "", numero: st.num, parceiras: parc, pontos: parc.map((n) => st.pts[n]), destaque: +st.destaque, at: nowISO() };
+    e.currentTarget.disabled = true;
+    try {
+      if (store.backend === "fb") await FB.db.doc("parcerias/" + t.id).set({ ...doc, criado: firebase.firestore.FieldValue.serverTimestamp() });
+      store.data.parcerias = { ...(store.data.parcerias || {}), [t.id]: { id: t.id, ...doc } };
+      ui.parc = null;
+      openModal({ title: "Obrigado! 🎉", icon: "celebration", body: `<p>Sua avaliação foi enviada.</p>`, footer: `<button class="btn btn-fill right" data-close>Fechar</button>` });
+      redesenha();
+    } catch (err) {
+      erro(/permission/.test(err.code || "") ? "Esta equipe já enviou a avaliação, ou o formulário está fechado." : "Não foi possível enviar agora. Tente de novo em instantes.");
+      e.currentTarget.disabled = false;
+    }
+  });
+}
+
+/* ---------- Liderança / Operação: liberar e ver os resultados ---------- */
+function renderParceria(root) {
+  const ev = currentEvent();
+  const cfg = parcCfg(ev.id);
+  const aberto = parcAberto(cfg);
+  const equipes = teamsOf(ev.id).map((t) => ({ t, n: parcNumero(t.name) })).filter((x) => x.n && PARC_MAPA[x.n]);
+  const resp = store.all("parcerias").filter((r) => r.eventId === ev.id);
+  const respPorNum = new Map(resp.map((r) => [r.numero, r]));
+  const faltam = equipes.filter((x) => !resp.some((r) => r.teamId === x.t.id));
+  const placar = Object.keys(PARC_EQUIPES).map(Number).map((n) => {
+    const notas = resp.flatMap((r) => (r.parceiras || []).map((p, i) => (p === n ? r.pontos[i] : null)).filter((v) => v != null));
+    return { n, nome: parcNome(n), soma: notas.reduce((a, b) => a + b, 0), qtd: notas.length, media: notas.length ? notas.reduce((a, b) => a + b, 0) / notas.length : 0, dest: resp.filter((r) => r.destaque === n).length };
+  }).filter((x) => equipes.some((e) => e.n === x.n));
+  ui.parcSort = ui.parcSort || { k: "soma", d: -1 };
+  const S = ui.parcSort;
+  placar.sort((a, b) => (S.k === "nome" ? a.nome.localeCompare(b.nome, "pt-BR") * -S.d : (b[S.k] - a[S.k]) * -S.d) || b.dest - a.dest || a.nome.localeCompare(b.nome, "pt-BR"));
+  const abreLocal = cfg.abreEm ? new Date(tsMs(cfg.abreEm) - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "";
+  const th = (k, l, cls = "") => `<th class="${cls} sortable" data-ps="${k}">${l}${S.k === k ? `<span class="msym sm">${S.d < 0 ? "arrow_downward" : "arrow_upward"}</span>` : ""}</th>`;
+  root.innerHTML = `
+    <div class="page-head"><div class="grow"><div class="eyebrow">${eventEyebrow()}</div><h1>Parceria</h1>
+      <p class="muted small">Formulário em que cada equipe avalia as equipes parceiras (13 pontos, mínimo 2 por equipe) e indica uma equipe de destaque.</p></div>
+      <button class="btn btn-out no-print" id="pc-csv"><span class="msym">download</span>Exportar</button></div>
+    <div class="card" style="margin-bottom:var(--sp-lg)">
+      <div class="sec-title"><h2>Liberação para as equipes</h2><span class="chip ${aberto ? "chip-ok" : "chip-out"}"><span class="msym">${aberto ? "lock_open" : "lock"}</span>${aberto ? "Aberto agora" : cfg.modo === "programado" ? "Programado" : "Fechado"}</span></div>
+      <div class="pc-modos">
+        <label class="opt-line"><input type="radio" name="pc-modo" value="fechado" ${cfg.modo === "fechado" ? "checked" : ""}><span><b>Fechado</b><span class="small muted"> — as equipes não veem o formulário</span></span></label>
+        <label class="opt-line"><input type="radio" name="pc-modo" value="aberto" ${cfg.modo === "aberto" ? "checked" : ""}><span><b>Aberto agora</b></span></label>
+        <label class="opt-line"><input type="radio" name="pc-modo" value="programado" ${cfg.modo === "programado" ? "checked" : ""}><span><b>Programado</b><span class="small muted"> — abre sozinho em:</span></span></label>
+        <input type="datetime-local" id="pc-abre" value="${attr(abreLocal)}" style="max-width:260px;margin-left:28px">
+      </div>
+      <button class="btn btn-fill" id="pc-salvar" style="margin-top:var(--sp-md)"><span class="msym">save</span>Salvar</button>
+    </div>
+    <div class="kpi-grid kpi-4" style="margin-bottom:var(--sp-lg)">
+      <div class="kpi good"><span class="k">Responderam</span><span class="v">${resp.length}</span><span class="sub">de ${equipes.length} equipes</span></div>
+      <div class="kpi ${faltam.length ? "warn" : ""}"><span class="k">Faltam</span><span class="v">${faltam.length}</span><span class="sub">equipes</span></div>
+    </div>
+    ${faltam.length ? `<div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Ainda não responderam</h2></div>
+      <div class="row g-2xs wrap">${faltam.sort((a, b) => a.n - b.n).map((x) => `<span class="chip chip-out">${String(x.n).padStart(2, "0")} · ${esc(x.t.name)}</span>`).join("")}</div></div>` : ""}
+    <div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Resultado</h2></div>
+      ${resp.length ? `<div class="tbl-wrap"><table><thead><tr>${th("nome", "Equipe")}${th("soma", "Pontos recebidos", "num")}${th("qtd", "Avaliações", "num")}${th("media", "Média", "num")}${th("dest", "Votos de destaque", "num")}</tr></thead>
+        <tbody>${placar.map((x) => `<tr><td><span class="mono small muted">${String(x.n).padStart(2, "0")}</span> <b>${esc(x.nome)}</b></td><td class="num mono">${x.soma}</td><td class="num mono">${x.qtd}</td><td class="num mono">${x.qtd ? fmt(x.media, 2) : "—"}</td><td class="num mono">${x.dest || "—"}</td></tr>`).join("")}</tbody></table></div>`
+        : emptyBox("handshake", "Nenhuma resposta ainda", "Os resultados aparecem aqui assim que as equipes enviarem.")}
+    </div>
+    ${resp.length ? `<div class="card"><div class="sec-title"><h2>Respostas</h2></div>
+      ${resp.slice().sort((a, b) => a.numero - b.numero).map((r) => `<details class="sl-room"><summary><span class="mono small muted">${String(r.numero).padStart(2, "0")}</span><b>${esc(parcNome(r.numero))}</b><span class="small muted">${fmtDT(r.at)}</span><span class="msym sm right chev">expand_more</span></summary>
+        <ul class="pp-list">${(r.parceiras || []).map((p, i) => `<li class="pp-row"><span class="pp-main">${esc(parcNome(p))}</span><b class="mono">${r.pontos[i]} pts</b></li>`).join("")}
+        <li class="pp-row"><span class="pp-main"><span class="small muted">Destaque</span>${esc(parcNome(r.destaque))}</span><span class="msym" style="color:var(--sys-primary)">star</span></li></ul>
+        <button class="btn btn-text btn-sm" data-pc-del="${attr(r.id)}" style="color:var(--sys-critical)"><span class="msym sm">restart_alt</span>Apagar e deixar responder de novo</button></details>`).join("")}</div>` : ""}`;
+  $$("[data-ps]").forEach((h) => h.addEventListener("click", () => { const k = h.dataset.ps; if (S.k === k) S.d = -S.d; else { S.k = k; S.d = k === "nome" ? 1 : -1; } render(); }));
+  $("#pc-abre").addEventListener("focus", () => { $("input[name=pc-modo][value=programado]").checked = true; });
+  $("#pc-salvar").addEventListener("click", async (e) => {
+    const modo = $("input[name=pc-modo]:checked")?.value || "fechado";
+    const quando = $("#pc-abre").value;
+    if (modo === "programado" && !quando) return toast("Escolha a data e a hora de abertura.", "err");
+    e.currentTarget.disabled = true;
+    const doc = { eventId: ev.id, modo, abreEm: modo === "programado" ? new Date(quando) : null, at: nowISO() };
+    try {
+      if (store.backend === "fb") await FB.db.doc("parceria_cfg/" + ev.id).set(doc);
+      store.data.parceria_cfg = { ...(store.data.parceria_cfg || {}), [ev.id]: { id: ev.id, ...doc, abreEm: doc.abreEm ? doc.abreEm.toISOString() : null } };
+      await store.audit(ev.id, "Formulário de parceria", modo === "programado" ? "programado para " + fmtDT(new Date(quando).toISOString()) : modo);
+      toast(modo === "aberto" ? "Formulário aberto para as equipes." : modo === "programado" ? "Abertura programada." : "Formulário fechado.");
+      render();
+    } catch (err) { toast("Não foi possível salvar: " + fbMsg(err), "err"); e.currentTarget.disabled = false; }
+  });
+  $$("[data-pc-del]").forEach((b) => b.addEventListener("click", async () => {
+    const r = store.get("parcerias", b.dataset.pcDel);
+    if (!(await confirmModal("Apagar resposta", `A resposta de <b>${esc(parcNome(r.numero))}</b> será apagada e a equipe poderá responder de novo.`, "Apagar", true))) return;
+    try {
+      if (store.backend === "fb") await FB.db.doc("parcerias/" + r.id).delete();
+      delete store.data.parcerias[r.id];
+      await store.audit(ev.id, "Resposta de parceria apagada", parcNome(r.numero));
+      render();
+    } catch (err) { toast("Não foi possível apagar: " + fbMsg(err), "err"); }
+  }));
+  $("#pc-csv").addEventListener("click", () => {
+    const cel = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const linhas = [["Data/Hora", "Equipe votante", "Equipe 1", "Nota 1", "Equipe 2", "Nota 2", "Equipe 3", "Nota 3", "Equipe 4", "Nota 4", "Equipe destaque"].map(cel).join(";")];
+    resp.slice().sort((a, b) => a.numero - b.numero).forEach((r) => {
+      const l = [new Date(r.at).toLocaleString("pt-BR"), parcNome(r.numero)];
+      for (let i = 0; i < 4; i++) l.push(r.parceiras[i] ? parcNome(r.parceiras[i]) : "", r.pontos[i] ?? "");
+      l.push(parcNome(r.destaque));
+      linhas.push(l.map(cel).join(";"));
+    });
+    linhas.push("", ["Equipe", "Pontos recebidos", "Avaliações", "Média", "Votos de destaque"].map(cel).join(";"));
+    placar.forEach((x) => linhas.push([x.nome, x.soma, x.qtd, x.qtd ? fmt(x.media, 2) : "", x.dest].map(cel).join(";")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿" + linhas.join("\r\n")], { type: "text/csv;charset=utf-8" }));
+    a.download = "parceria-explore.csv"; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  });
+}
+
+/* ============================================================
    8.2 AVALIADOR — lista de equipes
    ============================================================ */
 const ui = { filter: "todas", q: "", silent: false, listScroll: 0, flushRubric: null, orgTab: "equipes", orgFilter: "todas", orgQ: "", teamEval: 0, orgSort: {}, peopleQ: "", teamsQ: "", delibTab: "class", delibSort: { key: "rank", dir: -1 } };
@@ -4001,9 +4209,11 @@ function renderTeamHome(root) {
   /* antes do dia do evento: uma brincadeira com contagem regressiva (some sozinha no dia) */
   const ev = currentEvent();
   const hojeISO = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+  const parcHtml = parceriaEquipeHtml();
+  const bindParc = () => bindParceriaEquipe(() => renderTeamHome(root));
   if (!cfg.released && ev?.date && hojeISO < ev.date) {
     const dias = Math.round((new Date(ev.date + "T12:00:00") - new Date(hojeISO + "T12:00:00")) / 86400000);
-    root.innerHTML = `<div class="team-page">${head}
+    root.innerHTML = `<div class="team-page">${head}${parcHtml}
       <div class="card ans-card">
         <svg class="ans-art" viewBox="0 0 220 200" role="img" aria-label="Robô explorador segurando uma lupa ao lado de um osso de dinossauro">
   <ellipse cx="110" cy="186" rx="78" ry="9" fill="#000" opacity=".08"/>
@@ -4037,11 +4247,12 @@ function renderTeamHome(root) {
       ${recadoEquipeHtml("pre")}
     </div>`;
     bindRecadoEquipe(() => renderTeamHome(root));
+    bindParc();
     return;
   }
 
   if (!cfg.released || !sent.length) {
-    root.innerHTML = `<div class="team-page">${head}
+    root.innerHTML = `<div class="team-page">${head}${parcHtml}
       <div class="card wait-card">
         <span class="msym">${cfg.released ? "hourglass_top" : "schedule"}</span>
         <h2>${cfg.released ? "Sua devolutiva ainda não está pronta" : "A devolutiva ainda não foi liberada"}</h2>
@@ -4053,10 +4264,11 @@ function renderTeamHome(root) {
       ${faseRecado(ev) === "pos" ? `<div class="no-print">${recadoEquipeHtml("pos")}</div>` : ""}
     </div>`;
     bindRecadoEquipe(() => renderTeamHome(root));
+    bindParc();
     return;
   }
 
-  root.innerHTML = `<div class="team-page">${head}
+  root.innerHTML = `<div class="team-page">${head}<div class="no-print">${parcHtml}</div>
     <div class="banner ok no-print" style="margin-bottom:var(--sp-lg)"><span class="msym">celebration</span>
       <div>Parabéns pela participação no <i>FIRST</i>® LEGO® League Explore! Aqui está a Rubrica de Avaliação da equipe,
       com o resultado de <b>${sent.length} avaliador${sent.length > 1 ? "es" : ""}</b>.</div></div>
@@ -4064,6 +4276,7 @@ function renderTeamHome(root) {
     ${faseRecado(ev) === "pos" ? `<div class="no-print" style="margin-top:var(--sp-lg)">${recadoEquipeHtml("pos")}</div>` : ""}
   </div>`;
   bindRecadoEquipe(() => renderTeamHome(root));
+  bindParc();
   $("#tm-print")?.addEventListener("click", () => window.print());
 }
 
