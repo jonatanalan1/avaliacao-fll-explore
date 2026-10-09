@@ -1174,8 +1174,10 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .rc-meus{margin-top:var(--sp-xs)}
 .rc-frase .rc-sel{border:none!important;border-bottom:2px dashed var(--sys-primary)!important;border-radius:0!important;background:transparent!important;color:var(--sys-primary);font-weight:600;padding:0 2px!important;min-height:0!important}
 .rb-modo{margin-bottom:var(--sp-md);align-items:center;flex-wrap:wrap;gap:var(--sp-sm)}
-.tr-card{display:flex;align-items:center;gap:var(--sp-md);flex-wrap:wrap}
-.tr-card > .msym{font-size:28px;color:var(--sys-primary)}
+.tr-card{display:flex;align-items:center;gap:var(--sp-md);flex-wrap:wrap;background:linear-gradient(135deg,#6b2a94,#4d1870);color:#fff;border-color:transparent}
+.tr-card > .msym{font-size:30px;color:#fff}
+.tr-card .tr-btn{background:#fff;color:#5b1f80;font-weight:700}
+.tr-card .tr-btn:hover{background:#f3e8fb}
 .ts-card .cr-fila li{flex-wrap:wrap}
 .rc-velhos summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
 .rc-velhos summary::-webkit-details-marker{display:none}
@@ -1312,7 +1314,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "4.0.0";
+const APP_VERSION = "4.0.1";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -2774,6 +2776,7 @@ function navTabs() {
   const t = [];
   if (can.judge()) t.push({ id: "avaliar", icon: "rate_review", label: "Avaliar" });
   if (can.nac() || myRoles().length) t.push({ id: "sala", icon: "diversity_3", label: "Sala" });
+  if (store.backend === "fb" && (can.nac() || myRoles().length) && recadosParaMim().length) t.push({ id: "recados", icon: "mail", label: "Recados" });
   if (podeParceria()) t.push({ id: "parceria", icon: "handshake", label: "Parceria" });
   if (cronoCfg() && (can.nac() || myRoles().length)) t.push({ id: "cronograma", icon: "schedule", label: "Cronograma" });
   if (can.evalOrg()) t.push({ id: "painel", icon: "dashboard", label: "Painel" }, { id: "delib", icon: "gavel", label: "Deliberação" }, { id: "nivel", icon: "balance", label: "Nivelamento" });
@@ -2845,6 +2848,7 @@ function viewApp() {
   if (tab === "salas") return renderRooms(root);
   if (tab === "cronograma") return renderCrono(root);
   if (tab === "sala") return renderSala(root);
+  if (tab === "recados") return renderRecados(root);
   if (tab === "parceria") return renderParceria(root);
 }
 
@@ -3471,26 +3475,34 @@ function recVistos() { try { return new Set(JSON.parse(localStorage.getItem(recV
 function marcarVistos(ids) {
   try { const v = recVistos(); ids.forEach((i) => v.add(i)); localStorage.setItem(recVistosKey(), JSON.stringify([...v])); } catch (e) { /* sem memória: segue */ }
 }
+function recadoComResposta(r) {
+  const minha = minhaResposta(r.id);
+  return `<div class="rc-par">${recadoCartao(r, true)}
+    ${minha ? `<div class="rc-respondi"><span class="small">Você respondeu 💜</span>${postit(minha)}</div>`
+      : `<button class="btn btn-tonal btn-sm rc-resp-btn" data-responder="${attr(r.id)}"><span class="msym sm">reply</span>Responder</button>`}</div>`;
+}
+/* na página: só os recados que a pessoa ainda não viu (aparecem uma vez) */
 function recadosVoluntario() {
   const lista = recadosParaMim();
   if (!lista.length) return "";
   const vistos = ui.recVistosSessao || (ui.recVistosSessao = recVistos());
-  const novos = lista.filter((r) => !vistos.has(r.id)), velhos = lista.filter((r) => vistos.has(r.id));
-  /* na próxima vez, os de agora já contam como vistos */
+  const novos = lista.filter((r) => !vistos.has(r.id));
   marcarVistos(novos.map((r) => r.id));
-  const card = (r) => {
-    const minha = minhaResposta(r.id);
-    return `<div class="rc-par">${recadoCartao(r, true)}
-      ${minha ? `<div class="rc-respondi"><span class="small">Você respondeu 💜</span>${postit(minha)}</div>`
-        : `<button class="btn btn-tonal btn-sm rc-resp-btn" data-responder="${attr(r.id)}"><span class="msym sm">reply</span>Responder</button>`}</div>`;
-  };
+  if (!novos.length) return "";
   return `<div class="card rc-mural" style="margin-bottom:var(--sp-lg)">
-    ${novos.length ? `<div class="sec-title"><h2>${novos.length === 1 ? "Novo recado para você!" : "Novos recados para você!"}</h2><span class="chip chip-prim">${novos.length}</span></div>
-      <div class="rc-grid">${novos.map(card).join("")}</div>` : ""}
-    ${velhos.length ? `<details class="rc-velhos" ${novos.length ? "" : ""}><summary><span class="msym sm">mail</span><b>Recados das equipes</b><span class="chip chip-out">${velhos.length}</span>
-        <span class="rc-mini">${velhos.slice(0, 5).map((r) => (r.emojis || []).map((i) => RECADO_EMOJIS[i]).filter(Boolean)[0] || "💌").join(" ")}</span><span class="msym sm right chev">expand_more</span></summary>
-      <div class="rc-grid" style="margin-top:var(--sp-sm)">${velhos.map(card).join("")}</div></details>` : ""}
-  </div>`;
+    <div class="sec-title"><h2>${novos.length === 1 ? "Novo recado para você!" : "Novos recados para você!"}</h2><span class="chip chip-prim">${novos.length}</span></div>
+    <div class="rc-grid">${novos.map(recadoComResposta).join("")}</div>
+    <p class="small muted" style="margin-top:var(--sp-sm)">Depois, todos os recados ficam na seção <b>Recados</b>, no menu.</p></div>`;
+}
+/* seção "Recados": todos os recados recebidos, para reler e responder */
+function renderRecados(root) {
+  const lista = recadosParaMim();
+  marcarVistos(lista.map((r) => r.id));
+  root.innerHTML = `
+    <div class="page-head"><div class="grow"><div class="eyebrow">${eventEyebrow()}</div><h1>Recados das equipes</h1>
+      <p class="muted small">Recados que as equipes mandaram para você. Responda com um clique: a equipe não vê o seu nome.</p></div></div>
+    <div class="card">${lista.length ? `<div class="rc-grid">${lista.map(recadoComResposta).join("")}</div>`
+      : emptyBox("mail", "Nenhum recado ainda", "Quando uma equipe mandar um recado para você, ele aparece aqui.")}</div>`;
 }
 
 /* ---------- respostas dos voluntários aos recados (anônimas, só escolhas) ---------- */
@@ -3904,8 +3916,8 @@ function renderJudgeHome(root) {
     ${recadosVoluntario()}
     ${testesHtml(true)}
     ${can.judge() ? `<div class="card tr-card" style="margin-bottom:var(--sp-lg)"><span class="msym">school</span>
-      <div class="grow"><b>Quer treinar?</b><br><span class="small muted">Avalie a <b>Equipe de Treino</b> (fictícia) para conhecer a rubrica. Nada é enviado à organização.</span></div>
-      <a class="btn btn-out" href="#/treino"><span class="msym">play_arrow</span>Treinar</a></div>` : ""}
+      <div class="grow"><b>Quer treinar?</b><br><span class="small">Avalie a <b>Equipe de Treino</b> (fictícia) para conhecer a rubrica e o ambiente. Nada é enviado a nenhuma equipe, nem à organização.</span></div>
+      <a class="btn tr-btn" href="#/treino"><span class="msym">play_arrow</span>Treinar</a></div>` : ""}
     <div class="kpi-grid kpi-4" style="margin-bottom:var(--sp-lg)">
       <div class="kpi"><span class="k">Equipes</span><span class="v">${rows.length}</span><span class="sub">${can.evalOrg() ? "no evento" : "na sua sala"}</span></div>
       <div class="kpi good"><span class="k">Enviadas</span><span class="v">${nSent}</span><span class="sub">por você</span></div>
