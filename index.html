@@ -1173,6 +1173,14 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .rc-assin{line-height:2.4}
 .rc-meus{margin-top:var(--sp-xs)}
 .rc-frase .rc-sel{border:none!important;border-bottom:2px dashed var(--sys-primary)!important;border-radius:0!important;background:transparent!important;color:var(--sys-primary);font-weight:600;padding:0 2px!important;min-height:0!important}
+.rb-modo{margin-bottom:var(--sp-md);align-items:center;flex-wrap:wrap;gap:var(--sp-sm)}
+.tr-card{display:flex;align-items:center;gap:var(--sp-md);flex-wrap:wrap}
+.tr-card > .msym{font-size:28px;color:var(--sys-primary)}
+.ts-card .cr-fila li{flex-wrap:wrap}
+.rc-velhos summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
+.rc-velhos summary::-webkit-details-marker{display:none}
+.rc-velhos[open] .chev{transform:rotate(180deg)}
+.rc-mini{letter-spacing:2px}
 .rc-par{display:flex;flex-direction:column;gap:8px;min-width:0}
 .rc-resp-btn{align-self:flex-start}
 .rc-respondi{display:flex;flex-direction:column;gap:4px;color:var(--sys-primary);font-weight:600}
@@ -1304,7 +1312,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "3.8.1";
+const APP_VERSION = "4.0.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1864,7 +1872,7 @@ const FB = {
     evs.filter((ev) => !this._evUnsubs[ev]).forEach((ev) => {
       const L = (this._evUnsubs[ev] = []);
       const org = ev === "*" || (u?.roles?.[ev] || []).some((r) => r === "regional" || r === "lider");
-      [...FB_COL_EVENTO, "parceria_cfg", ...(org ? ["parcerias"] : [])].forEach((col) => {
+      [...FB_COL_EVENTO, "parceria_cfg", "testes", "aval_teste", ...(org ? ["parcerias"] : [])].forEach((col) => {
         const q = ev === "*" ? db.collection(col) : db.collection(col).where("eventId", "==", ev);
         espera.push(this._assina(L, col, ev, q));
       });
@@ -2070,7 +2078,7 @@ const LS_KEY = "explore.v2";
 const store = {
   mode: "local",
   db: null,
-  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {}, recados: {}, respostas: {}, parcerias: {}, parceria_cfg: {} },
+  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {}, recados: {}, respostas: {}, parcerias: {}, parceria_cfg: {}, testes: {}, aval_teste: {} },
   listeners: new Set(),
   ready: false,
 
@@ -2794,10 +2802,12 @@ function viewApp() {
   }
   /* rotas: #/avaliar/<equipe> (rubrica) e #/equipe/<equipe> (detalhe da organização) */
   const mR = location.hash.match(/^#\/avaliar\/(.+)$/);
+  const mT = location.hash.match(/^#\/teste\/(.+)$/);
+  const mTr = location.hash === "#/treino";
   const mE = location.hash.match(/^#\/equipe\/(.+)$/);
   const find = (m) => m && ACCESS.teams.find((t) => t.id === decodeURIComponent(m[1]));
   let tab = session.tab;
-  if (mR && can.judge()) tab = "avaliar";
+  if ((mR || mT || mTr) && can.judge()) tab = "avaliar";
   if (mE && can.evalOrg() && tab !== "delib") tab = "painel";
   if (!tabs.some((x) => x.id === tab)) tab = tabs[0].id;
   session.tab = tab;
@@ -2822,7 +2832,11 @@ function viewApp() {
     window.scrollTo(0, 0);
   }));
   const root = $("#tab-root");
-  if (tab === "avaliar") { const t = find(mR); return t && judgeSees(t) ? renderRubric(root, t) : renderJudgeHome(root); }
+  if (tab === "avaliar") {
+    if (mTr) return renderRubric(root, TREINO_TEAM(), "treino");
+    if (mT) { const t = find(mT); return t && (can.evalOrg() || meusTestes().some((x) => x.n === parcNumero(t.name))) ? renderRubric(root, t, "teste") : renderJudgeHome(root); }
+    const t = find(mR); return t && judgeSees(t) ? renderRubric(root, t) : renderJudgeHome(root);
+  }
   if (tab === "painel") { const t = find(mE); return t ? renderOrgTeam(root, t) : renderOrgHome(root); }
   if (tab === "delib") { const t = find(mE); return t ? renderOrgTeam(root, t) : renderDelib(root); }
   if (tab === "nivel") return renderNivel(root);
@@ -3013,6 +3027,33 @@ function cronoAgoraGeral(d, est, minha, ev) {
     ${est.length ? `<details class="cr-salas"><summary class="small"><span class="msym sm">meeting_room</span>Nas salas de avaliação agora</summary>${cronoAgora(est, minha, true)}</details>` : ""}`;
 }
 
+/* ---------- avaliação teste: as 2 equipes que cada avaliador visita (09:30 e 09:45) ---------- */
+function meusTestes(ev = currentEvent()) {
+  const t = ev && store.get("testes", ev.id);
+  const nums = t?.porCpf?.[session.user?.cpf] || [];
+  if (!nums.length) return [];
+  const d = cronoDados(ev);
+  const horas = [...new Map((d?.master || []).flatMap((m) => (m.calls || []).filter((c) => /teste/i.test(c.title)).map((c) => [m.time, c.end || m.time]))).entries()].sort();
+  return nums.map((n, i) => ({ n, nome: parcNome(n), ini: horas[i]?.[0] || "", fim: horas[i]?.[1] || "", team: teamsOf(ev.id).find((t) => parcNumero(t.name) === n) }));
+}
+function testesHtml(compacto) {
+  const lista = meusTestes();
+  if (!lista.length) return "";
+  const n = agoraHM(), hoje = hojeEhEvento();
+  return `<div class="card ts-card" style="margin-bottom:var(--sp-lg)">
+    <div class="sec-title"><h2>Avaliação teste</h2><span class="chip chip-warn"><span class="msym">science</span>antes das avaliações</span></div>
+    ${compacto ? "" : `<p class="small muted" style="margin-bottom:var(--sp-sm)">Para treinar antes de começar: você visita estas equipes.</p>`}
+    <ol class="cr-fila">${lista.map((x) => {
+      const agora = hoje && x.ini && x.ini <= n && n < x.fim, passou = hoje && x.fim && x.fim <= n;
+      const av = x.team && store.get("aval_teste", evalId(x.team.id, session.user.id));
+      const stt = evalStatus(av);
+      return `<li class="${agora ? "cr-agora" : ""} ${passou && stt === "sent" ? "cr-passou" : ""}"><span class="mono cr-h">${esc(x.ini)}${x.fim ? "–" + esc(x.fim) : ""}</span>
+        <span class="cr-t"><span class="small muted">nº ${String(x.n).padStart(2, "0")}</span> <b>${esc(x.nome)}</b></span>${agora ? `<span class="chip chip-ok">Agora</span>` : ""}
+        ${x.team && can.judge() ? (stt === "sent" ? `<span class="chip chip-ok"><span class="msym">task_alt</span>Enviada</span>`
+          : `<a class="btn ${stt === "pending" ? "btn-fill" : "btn-tonal"} btn-sm" href="#/teste/${attr(encodeURIComponent(x.team.id))}"><span class="msym sm">${stt === "pending" ? "science" : "edit"}</span>${stt === "pending" ? "Avaliar (teste)" : "Continuar"}</a>`) : ""}</li>`;
+    }).join("")}</ol></div>`;
+}
+
 /* ---------- aba Cronograma (voluntários do evento) ---------- */
 function renderCrono(root) {
   const ev = currentEvent();
@@ -3039,6 +3080,7 @@ function renderCrono(root) {
     ${!d ? `<div class="card">${emptyBox("schedule", cfg ? "Carregando…" : "Sem cronograma", cfg ? "Se demorar, confira a internet e clique em Atualizar." : "A Operação Nacional liga o cronograma em Editar evento.")}</div>` : `
     <div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Agora</h2><span class="msym" style="color:var(--sys-primary)">radio_button_checked</span></div>
       ${cronoAgoraGeral(d, est, minha, ev)}</div>
+    ${testesHtml()}
     <div class="card">
       <div class="sec-title"><h2>Filas de avaliação</h2>${minha ? `<button class="chip ${minha.name === ui.cronoSt ? "chip-prim" : "chip-out"} cr-esp cr-sua" data-cr="${attr(minha.name)}" title="Ver a fila da sua sala"><span class="msym">meeting_room</span>A sua: ${esc(minha.name)}</button>` : ""}</div>
       <div class="cr-chips" role="tablist">
@@ -3423,17 +3465,32 @@ function recadosParaMim(ev = currentEvent()) {
     return sorteio.some((x) => x.u.id === me.id);
   }).sort((a, b) => (b.at || "").localeCompare(a.at || ""));
 }
+/* recados já vistos ficam recolhidos; os novos aparecem grandes (memória deste aparelho) */
+const recVistosKey = () => "explore.recVistos:" + (session.user?.cpf || "");
+function recVistos() { try { return new Set(JSON.parse(localStorage.getItem(recVistosKey()) || "[]")); } catch (e) { return new Set(); } }
+function marcarVistos(ids) {
+  try { const v = recVistos(); ids.forEach((i) => v.add(i)); localStorage.setItem(recVistosKey(), JSON.stringify([...v])); } catch (e) { /* sem memória: segue */ }
+}
 function recadosVoluntario() {
   const lista = recadosParaMim();
   if (!lista.length) return "";
+  const vistos = ui.recVistosSessao || (ui.recVistosSessao = recVistos());
+  const novos = lista.filter((r) => !vistos.has(r.id)), velhos = lista.filter((r) => vistos.has(r.id));
+  /* na próxima vez, os de agora já contam como vistos */
+  marcarVistos(novos.map((r) => r.id));
+  const card = (r) => {
+    const minha = minhaResposta(r.id);
+    return `<div class="rc-par">${recadoCartao(r, true)}
+      ${minha ? `<div class="rc-respondi"><span class="small">Você respondeu 💜</span>${postit(minha)}</div>`
+        : `<button class="btn btn-tonal btn-sm rc-resp-btn" data-responder="${attr(r.id)}"><span class="msym sm">reply</span>Responder</button>`}</div>`;
+  };
   return `<div class="card rc-mural" style="margin-bottom:var(--sp-lg)">
-    <div class="sec-title"><h2>Recados das equipes para você</h2><span class="chip chip-prim">${lista.length}</span></div>
-    <div class="rc-grid">${lista.map((r) => {
-      const minha = minhaResposta(r.id);
-      return `<div class="rc-par">${recadoCartao(r, true)}
-        ${minha ? `<div class="rc-respondi"><span class="small">Você respondeu 💜</span>${postit(minha)}</div>`
-          : `<button class="btn btn-tonal btn-sm rc-resp-btn" data-responder="${attr(r.id)}"><span class="msym sm">reply</span>Responder</button>`}</div>`;
-    }).join("")}</div></div>`;
+    ${novos.length ? `<div class="sec-title"><h2>${novos.length === 1 ? "Novo recado para você!" : "Novos recados para você!"}</h2><span class="chip chip-prim">${novos.length}</span></div>
+      <div class="rc-grid">${novos.map(card).join("")}</div>` : ""}
+    ${velhos.length ? `<details class="rc-velhos" ${novos.length ? "" : ""}><summary><span class="msym sm">mail</span><b>Recados das equipes</b><span class="chip chip-out">${velhos.length}</span>
+        <span class="rc-mini">${velhos.slice(0, 5).map((r) => (r.emojis || []).map((i) => RECADO_EMOJIS[i]).filter(Boolean)[0] || "💌").join(" ")}</span><span class="msym sm right chev">expand_more</span></summary>
+      <div class="rc-grid" style="margin-top:var(--sp-sm)">${velhos.map(card).join("")}</div></details>` : ""}
+  </div>`;
 }
 
 /* ---------- respostas dos voluntários aos recados (anônimas, só escolhas) ---------- */
@@ -3845,6 +3902,10 @@ function renderJudgeHome(root) {
     </div>
 
     ${recadosVoluntario()}
+    ${testesHtml(true)}
+    ${can.judge() ? `<div class="card tr-card" style="margin-bottom:var(--sp-lg)"><span class="msym">school</span>
+      <div class="grow"><b>Quer treinar?</b><br><span class="small muted">Avalie a <b>Equipe de Treino</b> (fictícia) para conhecer a rubrica. Nada é enviado à organização.</span></div>
+      <a class="btn btn-out" href="#/treino"><span class="msym">play_arrow</span>Treinar</a></div>` : ""}
     <div class="kpi-grid kpi-4" style="margin-bottom:var(--sp-lg)">
       <div class="kpi"><span class="k">Equipes</span><span class="v">${rows.length}</span><span class="sub">${can.evalOrg() ? "no evento" : "na sua sala"}</span></div>
       <div class="kpi good"><span class="k">Enviadas</span><span class="v">${nSent}</span><span class="sub">por você</span></div>
@@ -3959,8 +4020,21 @@ function excedeMissing(e) {
   return ALL_CRITS.filter((c) => e?.scores?.[c.id] === 4 && !String(e?.excede?.[c.id] || "").trim());
 }
 
-function renderRubric(root, team) {
-  const saved = myEval(team.id);
+/* onde a rubrica grava: oficial (banco), teste (banco, separado) ou treino (só neste aparelho) */
+const TREINO_TEAM = () => ({ id: "__treino", name: "Equipe de Treino", eventId: session.eventId, number: "00", school: "Escola Exemplo", city: "Explorópolis" });
+const treinoKey = () => "explore.treino:" + (session.user?.cpf || session.user?.id || "");
+function fonteRubrica(modo, team) {
+  const id = evalId(team.id, session.user.id);
+  if (modo === "teste") return { get: () => store.get("aval_teste", id), put: (o) => store.put("aval_teste", o) };
+  if (modo === "treino") return {
+    get: () => { try { return JSON.parse(localStorage.getItem(treinoKey()) || "null"); } catch (e) { return null; } },
+    put: async (o) => { const x = { ...o, updatedAt: nowISO() }; try { localStorage.setItem(treinoKey(), JSON.stringify(x)); } catch (e) { /* sem memória */ } return x; },
+  };
+  return { get: () => myEval(team.id), put: (o) => store.put("evaluations", o) };
+}
+function renderRubric(root, team, modo = "oficial") {
+  const fonte = fonteRubrica(modo, team);
+  const saved = fonte.get();
   /* rascunho em memória: só vira registro no banco na primeira alteração */
   const e = saved ? JSON.parse(JSON.stringify(saved)) : {
     id: evalId(team.id, session.user.id), teamId: team.id, eventId: session.eventId, judgeId: session.user.id,
@@ -3989,7 +4063,11 @@ function renderRubric(root, team) {
         </div>
       </div>
 
-      ${ro ? `<div class="banner ok" style="margin-bottom:var(--sp-md)"><span class="msym">task_alt</span>
+      ${modo === "teste" ? `<div class="banner warn rb-modo"><span class="msym">science</span><div><b>Avaliação TESTE.</b> Não conta para a avaliação oficial nem aparece para a equipe: serve para o nivelamento dos avaliadores antes de começar.</div></div>` : ""}
+      ${modo === "treino" ? `<div class="banner info rb-modo"><span class="msym">school</span><div class="grow"><b>Treino.</b> A Equipe de Treino é fictícia: use à vontade para conhecer a rubrica. Fica só neste aparelho e não é enviado a ninguém.</div>
+        <button class="btn btn-out btn-sm" id="rb-treino-zera"><span class="msym sm">restart_alt</span>Apagar e recomeçar</button></div>` : ""}
+      ${ro && modo !== "oficial" ? `<div class="banner ok" style="margin-bottom:var(--sp-md)"><span class="msym">task_alt</span><div>${modo === "treino" ? "Treino concluído." : "Avaliação teste enviada."}</div></div>` : ""}
+      ${ro && modo === "oficial" ? `<div class="banner ok" style="margin-bottom:var(--sp-md)"><span class="msym">task_alt</span>
         <div>Avaliação <b>${evalNo(saved)}</b> enviada ${saved.sentAt ? "em " + fmtDT(saved.sentAt) : ""}. Para alterar, peça à organização para reabrir.</div></div>` : ""}
       ${st === "reopened" ? `<div class="banner crit" style="margin-bottom:var(--sp-md)"><span class="msym">lock_open</span>
         <div>A organização reabriu esta avaliação. Revise e envie de novo.</div></div>` : ""}
@@ -4070,14 +4148,14 @@ function renderRubric(root, team) {
   const persist = async () => {
     clearTimeout(timer);
     timer = null;
-    const cur = myEval(team.id);
+    const cur = fonte.get();
     if (cur && !canEdit(cur)) return;                  /* travada em outro aparelho */
     if (!e.createdAt) e.createdAt = cur?.createdAt || nowISO();
     const body = { ...e, judgeName: session.user.name, teamName: team.name, status: cur?.status === "reopened" ? "reopened" : "draft" };
     ui.silent = true;
-    const p = store.put("evaluations", body);
+    const p = fonte.put(body);
     ui.silent = false;
-    try { await p; $("#rb-saved") && ($("#rb-saved").textContent = "Salvo " + fmtDT(nowISO())); $("#rb-chip") && ($("#rb-chip").innerHTML = evalChip(evalStatus(myEval(team.id)))); } catch (err) { /* toast já avisou */ }
+    try { await p; $("#rb-saved") && ($("#rb-saved").textContent = "Salvo " + fmtDT(nowISO())); $("#rb-chip") && ($("#rb-chip").innerHTML = evalChip(evalStatus(fonte.get()))); } catch (err) { /* toast já avisou */ }
   };
   const schedule = (ms) => {
     if (ro) return;
@@ -4144,6 +4222,7 @@ function renderRubric(root, team) {
   $("#rb-com").addEventListener("input", (ev) => { e.comments = ev.target.value; schedule(); });
   $("#rb-org").addEventListener("input", (ev) => { e.orgComments = ev.target.value; schedule(); });
   const leave = () => { ui.flushRubric(); backToList(); };
+  $("#rb-treino-zera")?.addEventListener("click", () => { try { localStorage.removeItem(treinoKey()); } catch (e) { /* ok */ } renderRubric(root, team, modo); });
   $("#rb-back").addEventListener("click", leave);
   $("#rb-back2")?.addEventListener("click", leave);
 
@@ -4164,18 +4243,19 @@ function renderRubric(root, team) {
       return;
     }
     const ok = await confirmModal("Enviar avaliação",
-      `Enviar a avaliação de <b>${esc(team.name)}</b> com indicação <b>${e.recommend ? "SIM" : "NÃO"}</b> para a próxima etapa?
-       <br><br>Depois de enviada, só a organização consegue reabrir.`, "Enviar");
+      modo === "treino" ? `Concluir o treino? Nada é enviado à organização; você pode apagar e treinar de novo quando quiser.`
+      : `Enviar a avaliação ${modo === "teste" ? "<b>TESTE</b> " : ""}de <b>${esc(team.name)}</b> com indicação <b>${e.recommend ? "SIM" : "NÃO"}</b> para a próxima etapa?
+       <br><br>${modo === "teste" ? "Ela não conta para a avaliação oficial: serve para o nivelamento antes de começar." : "Depois de enviada, só a organização consegue reabrir."}`, modo === "treino" ? "Concluir" : "Enviar");
     if (!ok) return;
     clearTimeout(timer); timer = null;
     Object.keys(e.excede).forEach((k) => { if (e.scores[k] !== 4) delete e.excede[k]; });
-    const cur = myEval(team.id);
-    await store.put("evaluations", {
-      ...e, judgeName: session.user.name, teamName: team.name,
+    const cur = fonte.get();
+    await fonte.put({
+      ...e, judgeName: session.user.name, teamName: team.name, ...(modo === "teste" ? { teste: true } : {}),
       createdAt: cur?.createdAt || nowISO(), status: "sent", sentAt: nowISO(),
       firstSentAt: cur?.firstSentAt || nowISO(),
     });
-    toast(`Avaliação de ${team.name} enviada.`);
+    toast(modo === "treino" ? "Treino concluído! Nada foi enviado à organização." : modo === "teste" ? `Avaliação TESTE de ${team.name} enviada.` : `Avaliação de ${team.name} enviada.`);
     backToList();
   });
 
@@ -6050,7 +6130,10 @@ function lineChart(axis, series, opts = {}) {
 /* ---------- cálculos ---------- */
 function nvData() {
   const st = nvState();
-  const allSent = evalsOfEvent().filter((e) => e.status === "sent");
+  /* "Teste": as avaliações da avaliação teste (09:30/09:45), separadas das oficiais */
+  const ids = new Set(teamsOf(session.eventId).map((t) => t.id));
+  const fonte = ui.nivelTeste ? store.all("aval_teste").filter((e) => ids.has(e.teamId)) : evalsOfEvent();
+  const allSent = fonte.filter((e) => e.status === "sent");
   const sent = allSent.filter((e) => !st.excl.has(e.id));
   const byTeam = {};
   sent.forEach((e) => { (byTeam[e.teamId] = byTeam[e.teamId] || []).push(e); });
@@ -6159,8 +6242,12 @@ function renderNivel(root) {
     <div class="page-head">
       <div class="grow">
         <div class="eyebrow">${eventEyebrow()}</div>
-        <h1>Nivelamento</h1>
-        <p class="muted small">Compare avaliadores, equipes e salas com a média do evento. Nada aqui muda as notas: tirar uma avaliação da análise é só simulação.</p>
+        <h1>Nivelamento${ui.nivelTeste ? ` <span class="chip chip-warn" style="vertical-align:4px"><span class="msym">science</span>Avaliação teste</span>` : ""}</h1>
+        <p class="muted small">${ui.nivelTeste ? "Avaliações da avaliação teste (antes de começar): veja quem está mais rígido ou mais generoso e alinhe o grupo. Não contam para o resultado." : "Compare avaliadores, equipes e salas com a média do evento. Nada aqui muda as notas: tirar uma avaliação da análise é só simulação."}</p>
+      </div>
+      <div class="seg no-print" role="group" aria-label="Quais avaliações">
+        <button data-nvfonte="oficial" aria-pressed="${!ui.nivelTeste}"><span class="msym sm">verified</span>Oficiais</button>
+        <button data-nvfonte="teste" aria-pressed="${!!ui.nivelTeste}"><span class="msym sm">science</span>Teste <span class="nv-badge" style="background:var(--sys-secondary-container);color:var(--sys-on-secondary-container)">${store.all("aval_teste").filter((e) => e.status === "sent" && teamsOf(session.eventId).some((t) => t.id === e.teamId)).length}</span></button>
       </div>
     </div>
     <div class="nv-bar">
@@ -6182,6 +6269,7 @@ function renderNivel(root) {
 
   chart?.bind();
   $$("[data-lens]").forEach((b) => b.addEventListener("click", () => { st.lens = b.dataset.lens; render(); }));
+  $$("[data-nvfonte]").forEach((b) => b.addEventListener("click", () => { ui.nivelTeste = b.dataset.nvfonte === "teste"; st.sel = { aval: null, sala: null }; st.team = null; st.excl = new Set(); render(); }));
   $$("[data-gran]").forEach((b) => b.addEventListener("click", () => { st.gran = b.dataset.gran; render(); }));
   $$("[data-disc]").forEach((b) => b.addEventListener("click", () => { st.disc = +b.dataset.disc; try { localStorage.setItem("explore.disc", st.disc); } catch (e) { /* ignora */ } render(); }));
   $("#nv-clear")?.addEventListener("click", () => { st.excl.clear(); render(); });
@@ -7035,7 +7123,7 @@ async function boot() {
     if (ui.silent || modalStack.length) return;
     if (document.activeElement?.matches("input,textarea,select")) return;
     /* rubrica aberta: não redesenha no meio do preenchimento (a tela "pulava" no celular) */
-    if (ui.flushRubric && /^#\/avaliar\//.test(location.hash)) return;
+    if (ui.flushRubric && /^#\/(avaliar\/|teste\/|treino)/.test(location.hash)) return;
     const y = window.scrollY;
     render();
     window.scrollTo(0, y);
