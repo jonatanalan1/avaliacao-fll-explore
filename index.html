@@ -1179,6 +1179,9 @@ tr.nv-out td{background:var(--sys-warning-container)}
 .tr-card .tr-btn{background:#fff;color:#5b1f80;font-weight:700}
 .tr-card .tr-btn:hover{background:#f3e8fb}
 .ts-card .cr-fila li{flex-wrap:wrap}
+.bk-op{width:100%;text-align:left;display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid var(--sys-outline-variant);border-radius:12px;background:var(--sys-surface);cursor:pointer;font:inherit;color:inherit}
+.bk-op:hover{border-color:var(--sys-primary);background:var(--sys-primary-container)}
+.bk-op .msym{font-size:26px;color:var(--sys-primary)}
 .rc-velhos summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
 .rc-velhos summary::-webkit-details-marker{display:none}
 .rc-velhos[open] .chev{transform:rotate(180deg)}
@@ -1314,7 +1317,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "4.0.1";
+const APP_VERSION = "4.1.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -4478,6 +4481,7 @@ function renderOrgHome(root) {
       </div>
       <div class="row g-2xs wrap">
         <button class="btn btn-out" id="org-xls"><span class="msym">download</span>Exportar Excel</button>
+        <button class="btn btn-fill" id="org-backup"><span class="msym">backup</span>Baixar backup</button>
         <button class="btn ${cfg.released ? "btn-tonal" : "btn-fill"}" id="org-release">
           <span class="msym">${cfg.released ? "visibility_off" : "campaign"}</span>${cfg.released ? "Ocultar devolutiva" : "Liberar devolutiva"}</button>
       </div>
@@ -4639,7 +4643,20 @@ function renderOrgHome(root) {
     await store.audit(null, on ? "Devolutiva liberada" : "Devolutiva ocultada", "");
     toast(on ? "Devolutiva liberada para as equipes." : "Devolutiva ocultada.");
   });
-  $("#org-xls").addEventListener("click", exportExcel);
+  $("#org-xls").addEventListener("click", () => exportExcel());
+  $("#org-backup").addEventListener("click", () => openModal({
+    title: "Baixar backup", icon: "backup",
+    body: `<div class="stack g-sm">
+      <button class="opt-line bk-op" data-bk="xlsx"><span class="msym">table_view</span><span><b>Backup completo (Excel)</b><br><span class="small muted">Uma planilha com abas: resumo, avaliações, avaliadores, deliberação, voluntários (com telefones), equipes, salas, avaliação teste, parceria, recados e respostas${can.nac() ? ", e a base de cadastro" : ""}.</span></span></button>
+      <button class="opt-line bk-op" data-bk="json"><span class="msym">data_object</span><span><b>Backup técnico (dados brutos)</b><br><span class="small muted">Arquivo .json com tudo do evento, do jeito que está no banco. Serve para restaurar se algo der muito errado.</span></span></button>
+      <p class="small muted">Os arquivos têm dados pessoais (CPF e telefones): guarde em lugar seguro e não compartilhe.</p></div>`,
+    footer: `<button class="btn btn-text right" data-close>Fechar</button>`,
+    onMount: (el, close) => $$("[data-bk]", el).forEach((b) => b.addEventListener("click", async () => {
+      if (b.dataset.bk === "xlsx") { if (can.nac() && !store.base && store.backend === "fb") await FB.loadBase().catch(() => {}); exportExcel(true); }
+      else backupJson();
+      close();
+    })),
+  }));
 }
 
 /* ---------- detalhe da equipe: todas as avaliações ---------- */
@@ -5168,7 +5185,7 @@ function askText(title, label, placeholder, value, multiline) {
 }
 
 /* ---------- exportação ---------- */
-function exportExcel() {
+function exportExcel(completo = false) {
   if (typeof XLSX === "undefined") return toast("Biblioteca de planilhas indisponível (sem internet?).", "err");
   const lvl = (v) => (v ? `${v} - ${LEVELS.find((l) => l.v === v).label}` : "");
   const teams = ACCESS.teams.slice().sort(byName);
@@ -5242,10 +5259,83 @@ function exportExcel() {
     row["Obs. prêmio"] = r.d.awardNote || "";
     return row;
   }));
+  if (completo) backupAbas(add);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
   const slug = norm(currentEvent()?.name || "evento").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  XLSX.writeFile(wb, `avaliacao-${slug}-${stamp}.xlsx`);
-  toast("Planilha gerada.");
+  XLSX.writeFile(wb, `${completo ? "backup" : "avaliacao"}-${slug}-${stamp}.xlsx`);
+  toast(completo ? "Backup gerado." : "Planilha gerada.");
+}
+
+/* ---------- backup completo: abas extras além das avaliações ---------- */
+function backupAbas(add) {
+  const ev = currentEvent();
+  const papelTxt = (u) => ROLE_ORDER.filter((r) => (u.roles?.[ev.id] || []).includes(r)).map((r) => ROLES[r].label).join(" · ");
+  const pessoas = store.all("users").filter((u) => (u.roles?.[ev.id] || []).length).sort(byName);
+  add("Voluntários", pessoas.map((u) => ({
+    "Nome": u.name, "CPF": u.cpf ? fmtCPF(u.cpf) : "", "Funções": papelTxt(u), "Sala": roomName(judgeRoomId(u, ev.id)) || "",
+    "Telefone (inscrição)": telDe(u.cpf) ? maskTel(telDe(u.cpf)) : "", "WhatsApp compartilhado": perfilDe(u.cpf)?.whats ? maskTel(perfilDe(u.cpf).whats) : "",
+    "Equipes do teste": (store.get("testes", ev.id)?.porCpf?.[u.cpf] || []).map((n) => `${String(n).padStart(2, "0")} ${parcNome(n)}`).join(" | "),
+  })));
+  const equipes = teamsOf(ev.id).sort(byName);
+  add("Equipes", equipes.map((t) => ({
+    "Nº": t.number || "", "Equipe": t.name, "Registro": t.baseId || "", "Escola": t.school || "", "Cidade": t.city || "", "UF": t.state || "", "Tutor(a)": t.coach || "",
+    "Salas (cronograma)": teamRoomIds(t).map((id) => `${roomName(id)}${slotNaSala(t, id) ? " " + slotNaSala(t, id).start : ""}`).join(" | "),
+  })));
+  add("Salas", roomsOf(ev.id).slice().sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { numeric: true })).map((r) => ({
+    "Sala": r.name,
+    "Avaliadores": pessoas.filter((u) => judgeRoomId(u, ev.id) === r.id).map((u) => u.name).join(" | "),
+    "Equipes": equipes.filter((t) => teamRoomIds(t).includes(r.id)).map((t) => t.name).join(" | "),
+  })));
+  const ids = new Set(equipes.map((t) => t.id));
+  add("Avaliação teste", store.all("aval_teste").filter((e) => ids.has(e.teamId)).map((e) => {
+    const row = { "Equipe": e.teamName || store.get("teams", e.teamId)?.name || "", "Avaliador(a)": e.judgeName || "", "Situação": e.status === "sent" ? "Enviada" : "Rascunho" };
+    RUBRIC.forEach((sec) => sec.crits.forEach((c) => { row[`${sec.title} · ${c.short}`] = e.scores?.[c.id] || ""; }));
+    row["Nota da rubrica (5-20)"] = +evalTotal(e).toFixed(4);
+    row["Indica"] = e.recommend === true ? "Sim" : e.recommend === false ? "Não" : "";
+    row["Comentários"] = e.comments || "";
+    return row;
+  }));
+  const parc = store.all("parcerias").filter((r) => r.eventId === ev.id).sort((a, b) => a.numero - b.numero);
+  add("Parceria", parc.map((r) => {
+    const row = { "Data/Hora": fmtDTs(r.at), "Equipe votante": parcNome(r.numero) };
+    for (let i = 0; i < 4; i++) { row[`Equipe ${i + 1}`] = r.parceiras?.[i] ? parcNome(r.parceiras[i]) : ""; row[`Nota ${i + 1}`] = r.pontos?.[i] ?? ""; }
+    row["Equipe destaque"] = parcNome(r.destaque);
+    return row;
+  }));
+  const respostas = store.all("respostas").filter((x) => x.eventId === ev.id);
+  add("Recados", store.all("recados").filter((r) => r.eventId === ev.id && Array.isArray(r.assin)).sort((a, b) => (a.at || "").localeCompare(b.at || "")).map((r) => ({
+    "Data/Hora": fmtDTs(r.at), "Equipe": store.get("teams", r.teamId)?.name || "", "Fase": r.fase === "pos" ? "Depois do evento" : "Antes do evento",
+    "Recado": recadoTexto(r), "Emojis": (r.emojis || []).map((i) => RECADO_EMOJIS[i]).filter(Boolean).join(" "), "Core Value": CORE_VALUES[r.cv]?.[0] || "",
+    "Assinatura": assinTexto(r.assin), "Respostas": respostas.filter((x) => x.recadoId === r.id).length,
+  })));
+  add("Respostas aos recados", respostas.sort((a, b) => (a.at || "").localeCompare(b.at || "")).map((x) => ({
+    "Data/Hora": fmtDTs(x.at), "Recado": recadoTexto(store.get("recados", x.recadoId) || {}), "Equipe do recado": store.get("teams", store.get("recados", x.recadoId)?.teamId)?.name || "",
+    "Resposta": respostaTexto(x), "Emojis": (x.emojis || []).map((i) => RECADO_EMOJIS[i]).filter(Boolean).join(" "),
+  })));
+  if (can.nac() && store.base) {
+    add("Base · voluntários", store.base.volunteers.slice().sort(byName).map((v) => ({ "Nome": v.name, "CPF": fmtCPF(v.cpf), "Cidade": v.city || "", "UF": v.uf || "", "Tem senha": v.hasLogin === false ? "não" : "sim" })));
+    add("Base · equipes", store.base.teams.slice().sort(byName).map((t) => ({ "Equipe": t.name, "Registro": t.baseId, "Cód.": t.code || "", "Escola": t.school || "", "Cidade": t.city || "", "UF": t.state || "", "Tutor(a)": t.coach || "", "Tem código": t.hasLogin === false ? "não" : "sim" })));
+  }
+}
+/* backup técnico: os dados brutos do evento (para restaurar se algo der muito errado) */
+function backupJson() {
+  const ev = currentEvent();
+  const ids = new Set(teamsOf(ev.id).map((t) => t.id));
+  const doEvento = (col) => store.all(col).filter((x) => x.eventId === ev.id || ids.has(x.teamId) || x.id === ev.id);
+  const dados = {
+    tipo: "fll-explore-backup", versao: APP_VERSION, geradoEm: nowISO(), por: session.user?.name || "", evento: ev,
+    users: store.all("users").filter((u) => (u.roles?.[ev.id] || []).length || u.nacional),
+    teams: teamsOf(ev.id), rooms: roomsOf(ev.id),
+    evaluations: doEvento("evaluations"), aval_teste: doEvento("aval_teste"), settings: doEvento("settings"), deliberation: doEvento("deliberation"),
+    recados: doEvento("recados"), respostas: doEvento("respostas"), parcerias: doEvento("parcerias"), parceria_cfg: doEvento("parceria_cfg"), testes: doEvento("testes"),
+  };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(dados, null, 1)], { type: "application/json" }));
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  a.download = `backup-tecnico-${norm(ev.name).replace(/[^a-z0-9]+/g, "-")}-${stamp}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  toast("Backup técnico gerado.");
 }
 
 /* ============================================================
