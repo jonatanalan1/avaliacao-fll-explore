@@ -401,6 +401,8 @@ tr.p3 .pos-medal{color:#a0522d}
 .kpi.warn{background:var(--sys-warning-container)}
 .kpi.warn .v,.kpi.warn .k,.kpi.warn .sub{color:var(--sys-on-warning-container)}
 .kpi.good{background:var(--sys-success-container)}
+.kpi.crit{background:var(--sys-critical-container)}
+.kpi.crit .v,.kpi.crit .k,.kpi.crit .sub{color:var(--sys-on-critical-container)}
 .kpi.good .v,.kpi.good .k,.kpi.good .sub{color:var(--sys-on-success-container)}
 
 .progress{height:6px;border-radius:var(--rf);background:var(--surface-4);overflow:hidden}
@@ -956,6 +958,32 @@ th.sortable .msym{vertical-align:-3px;margin-left:2px}
 .aw-box{border:1px solid var(--sys-outline-variant);border-radius:var(--r3);padding:var(--sp-sm) var(--sp-md);background:var(--sys-surface)}
 .aw-title{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--sys-primary);margin-bottom:6px}
 .aw-box ol,.aw-box ul{margin:0;padding-left:20px;font-size:13px;line-height:1.6}
+.pe-intro{display:flex;gap:var(--sp-md);align-items:flex-start;background:var(--sys-primary-container);color:var(--sys-on-primary-container);border:0}
+.pe-intro h2{margin:0 0 6px}
+.pe-intro .pe-ico{font-size:40px}
+.pe-leg{margin:0 0 var(--sp-sm)}
+.pe-sec h2{display:flex;align-items:center;gap:8px}
+.pe-item>label{font-weight:600}
+.pe-ops{display:flex;flex-wrap:wrap;gap:6px}
+.pe-op{border:1px solid var(--sys-outline-variant);background:var(--sys-surface);color:var(--sys-on-surface);border-radius:var(--rf);padding:8px 14px;font:inherit;cursor:pointer}
+.pe-op[aria-pressed="true"]{background:var(--sys-primary);border-color:var(--sys-primary);color:var(--sys-on-primary)}
+.pe-grade{display:flex;flex-direction:column;gap:6px}
+.pe-lin{display:flex;align-items:center;gap:var(--sp-sm);flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--sys-outline-variant)}
+.pe-lab{flex:1 1 220px}
+.pe-notas{display:flex;gap:4px}
+.pe-n{width:40px;height:40px;border-radius:50%;border:1px solid var(--sys-outline-variant);background:var(--sys-surface);color:var(--sys-on-surface);font:600 14px/1 inherit;cursor:pointer}
+.pe-n.na{font-size:11px}
+.pe-n[aria-pressed="true"]{background:var(--sys-primary);border-color:var(--sys-primary);color:var(--sys-on-primary)}
+.pe-m{display:inline-block;width:120px;height:8px;border-radius:4px;background:var(--sys-surface-variant, #e7e0ec);margin-right:8px;vertical-align:middle;overflow:hidden}
+.pe-m i{display:block;height:100%;background:var(--sys-primary)}
+.pe-mcol{white-space:nowrap}
+.pe-txts{list-style:none;padding:0;margin:var(--sp-sm) 0;display:flex;flex-direction:column;gap:var(--sp-sm)}
+.pe-dl dt{font-weight:600;margin-top:var(--sp-sm)}
+.pe-dl dd{margin:2px 0 0}
+.ts-vis{list-style:none;margin:0 0 4px;padding:0;display:flex;flex-direction:column;gap:4px}
+.ts-vis li{display:flex;align-items:center;gap:var(--sp-xs);flex-wrap:wrap}
+.ts-tbl td{vertical-align:top}
+.ts-sem td{background:var(--sys-critical-container)}
 .opt-line{display:flex;gap:var(--sp-sm);align-items:flex-start;padding:var(--sp-2xs) var(--sp-sm);border:1px solid var(--sys-outline-variant);border-radius:var(--r4);cursor:pointer}
 .opt-line:has(input:checked){border-color:var(--sys-primary);background:var(--sys-primary-container)}
 .opt-line input{margin-top:3px;accent-color:var(--sys-primary)}
@@ -1317,7 +1345,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "4.2.0";
+const APP_VERSION = "4.3.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -1818,6 +1846,7 @@ const FB = {
       espera.push(this._assina(L, "respostas", "minhas", db.collection("respostas").where("baseId", "==", who.baseId)));
       espera.push(this._assina(L, "parcerias", "minha", db.collection("parcerias").where("baseId", "==", who.baseId)));
       espera.push(this._assina(L, "parceria_cfg", "todas", db.collection("parceria_cfg")));
+      espera.push(this._assina(L, "pos_evento", "meu", db.collection("pos_evento").where("baseId", "==", who.baseId)));
       await Promise.all(espera);
       return;
     }
@@ -1877,7 +1906,9 @@ const FB = {
     evs.filter((ev) => !this._evUnsubs[ev]).forEach((ev) => {
       const L = (this._evUnsubs[ev] = []);
       const org = ev === "*" || (u?.roles?.[ev] || []).some((r) => r === "regional" || r === "lider");
-      [...FB_COL_EVENTO, "parceria_cfg", "testes", "aval_teste", ...(org ? ["parcerias"] : [])].forEach((col) => {
+      /* pós-evento das equipes: só Nacional e Operador Regional (não o Líder) */
+      const reg = ev === "*" || (u?.roles?.[ev] || []).includes("regional");
+      [...FB_COL_EVENTO, "parceria_cfg", "testes", "aval_teste", ...(org ? ["parcerias"] : []), ...(reg ? ["pos_evento"] : [])].forEach((col) => {
         const q = ev === "*" ? db.collection(col) : db.collection(col).where("eventId", "==", ev);
         espera.push(this._assina(L, col, ev, q));
       });
@@ -2083,7 +2114,7 @@ const LS_KEY = "explore.v2";
 const store = {
   mode: "local",
   db: null,
-  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {}, recados: {}, respostas: {}, parcerias: {}, parceria_cfg: {}, testes: {}, aval_teste: {} },
+  data: { users: {}, events: {}, teams: {}, rooms: {}, evaluations: {}, settings: {}, deliberation: {}, audit: {}, perfis: {}, contatos: {}, recados: {}, respostas: {}, parcerias: {}, parceria_cfg: {}, testes: {}, aval_teste: {}, pos_evento: {} },
   listeners: new Set(),
   ready: false,
 
@@ -2782,6 +2813,7 @@ function navTabs() {
   if (store.backend === "fb" && (can.nac() || myRoles().length) && recadosParaMim().length) t.push({ id: "recados", icon: "mail", label: "Recados" });
   if (podeParceria()) t.push({ id: "parceria", icon: "handshake", label: "Parceria" });
   if (store.backend === "fb" && (can.evalOrg() || can.people())) t.push({ id: "teste", icon: "science", label: "Teste" });
+  if (store.backend === "fb" && can.people()) t.push({ id: "posevento", icon: "assignment", label: "Pós-evento" });
   if (cronoCfg() && (can.nac() || myRoles().length)) t.push({ id: "cronograma", icon: "schedule", label: "Cronograma" });
   if (can.evalOrg()) t.push({ id: "painel", icon: "dashboard", label: "Painel" }, { id: "delib", icon: "gavel", label: "Deliberação" }, { id: "nivel", icon: "balance", label: "Nivelamento" });
   if (can.people()) t.push({ id: "voluntarios", icon: "badge", label: "Voluntários" }, { id: "equipes", icon: "groups", label: "Equipes" }, { id: "salas", icon: "meeting_room", label: "Salas" });
@@ -2855,6 +2887,7 @@ function viewApp() {
   if (tab === "recados") return renderRecados(root);
   if (tab === "parceria") return renderParceria(root);
   if (tab === "teste") return renderTesteOrg(root);
+  if (tab === "posevento") return renderPosEventoOrg(root);
 }
 
 /* ============================================================
@@ -3072,56 +3105,97 @@ function renderTesteOrg(root) {
   const juizes = peopleOf(ev.id).filter((u) => u.cpf && u.roles[ev.id].includes("avaliador"))
     .sort((a, b) => (salaOrd.get(judgeRoomId(a, ev.id)) ?? 999) - (salaOrd.get(judgeRoomId(b, ev.id)) ?? 999) || a.name.localeCompare(b.name, "pt-BR"));
   const horas = (() => { const d = cronoDados(ev); return [...new Set((d?.master || []).flatMap((m) => (m.calls || []).filter((c) => /teste/i.test(c.title)).map(() => m.time)))].sort(); })();
-  const avDe = (u, n) => { const t = equipes.find((x) => x.n === n)?.t; return t ? store.get("aval_teste", evalId(t.id, "vol-" + u.cpf)) : null; };
+  const hora = (i) => horas[i] || `${i + 1}ª visita`;
+  const sala = (u) => roomOf(u, ev.id);
   const todas = store.all("aval_teste").filter((e) => e.eventId === ev.id);
   const nEnv = todas.filter((e) => e.status === "sent").length;
-  const nDesig = juizes.reduce((a, u) => a + (porCpf[u.cpf] || []).filter(Boolean).length, 0);
-  const visitas = new Map();
-  juizes.forEach((u) => (porCpf[u.cpf] || []).forEach((n) => n && visitas.set(n, (visitas.get(n) || 0) + 1)));
-  const cel = (u, i) => {
-    const n = (porCpf[u.cpf] || [])[i] || 0;
-    const av = n ? avDe(u, n) : null;
-    const st = evalStatus(av);
-    return `<td><select class="ts-sel" data-ts-cpf="${attr(u.cpf)}" data-ts-i="${i}" aria-label="Equipe ${i + 1} de ${attr(u.name)}">
-        <option value="0">— nenhuma —</option>
-        ${equipes.map((x) => `<option value="${x.n}" ${x.n === n ? "selected" : ""}>${String(x.n).padStart(2, "0")} · ${esc(x.t.name)}</option>`).join("")}
-      </select>
-      ${n ? `<div class="row g-2xs" style="margin-top:4px">${evalChip(st)}${av ? `<button class="btn btn-text btn-sm" data-ts-ver="${attr(av.id)}"><span class="msym sm">visibility</span>Ver</button>` : ""}</div>` : ""}</td>`;
+  /* quem visita cada equipe: [{ u, i (horário) }] */
+  const visitas = new Map(equipes.map((x) => [x.n, []]));
+  juizes.forEach((u) => (porCpf[u.cpf] || []).forEach((n, i) => n && visitas.get(n)?.push({ u, i })));
+  const semAval = equipes.filter((x) => !visitas.get(x.n).length);
+  const livres = juizes.filter((u) => !(porCpf[u.cpf] || []).some(Boolean));
+  const linha = (x) => {
+    const vs = visitas.get(x.n).sort((a, b) => a.i - b.i);
+    return `<tr class="${vs.length ? "" : "ts-sem"}">
+      <td><span class="mono small muted">${String(x.n).padStart(2, "0")}</span> <b>${esc(x.t.name)}</b>
+        <div style="margin-top:4px">${vs.length ? `<span class="chip chip-ok">${vs.length} avaliador${vs.length > 1 ? "es" : ""}</span>` : `<span class="chip chip-crit"><span class="msym">warning</span>sem avaliador</span>`}</div></td>
+      <td><ul class="ts-vis">${vs.map(({ u, i }) => {
+        const av = store.get("aval_teste", evalId(x.t.id, "vol-" + u.cpf));
+        return `<li><span class="mono small">${esc(hora(i))}</span><span class="grow"><b>${esc(u.name)}</b> <span class="small muted">${esc(sala(u) || "")}</span></span>
+          ${evalChip(evalStatus(av))}
+          ${av ? `<button class="btn btn-text btn-sm" data-ts-ver="${attr(av.id)}"><span class="msym sm">visibility</span>Ver</button>` : ""}
+          <button class="icon-btn" data-ts-tira="${attr(u.cpf)}" data-ts-i="${i}" title="Tirar ${attr(u.name)} desta equipe" aria-label="Tirar ${attr(u.name)} desta equipe"><span class="msym">close</span></button></li>`;
+      }).join("")}</ul>
+        <button class="btn btn-text btn-sm" data-ts-add="${x.n}"><span class="msym sm">person_add</span>Adicionar avaliador</button></td></tr>`;
   };
   root.innerHTML = `
     <div class="page-head"><div class="grow"><div class="eyebrow">${eventEyebrow()}</div><h1>Avaliação teste</h1>
-      <p class="muted small">As equipes que cada avaliador visita para treinar antes de começar. Trocou aqui, muda na hora para o avaliador. Não conta para a avaliação oficial nem aparece para as equipes.</p></div></div>
+      <p class="muted small">Quem visita cada equipe para treinar antes de começar. Trocou aqui, muda na hora para o avaliador. Não conta para a avaliação oficial nem aparece para as equipes.</p></div></div>
     <div class="kpi-grid kpi-4" style="margin-bottom:var(--sp-lg)">
-      <div class="kpi"><span class="k">Visitas marcadas</span><span class="v">${nDesig}</span><span class="sub">${juizes.length} avaliadores</span></div>
+      <div class="kpi ${semAval.length ? "crit" : "good"}"><span class="k">Equipes sem avaliador</span><span class="v">${semAval.length}</span><span class="sub">de ${equipes.length} equipes</span></div>
+      <div class="kpi ${livres.length ? "warn" : ""}"><span class="k">Avaliadores sem visita</span><span class="v">${livres.length}</span><span class="sub">de ${juizes.length}</span></div>
       <div class="kpi good"><span class="k">Enviadas</span><span class="v">${nEnv}</span><span class="sub">avaliações teste</span></div>
       <div class="kpi ${todas.length - nEnv ? "warn" : ""}"><span class="k">Em rascunho</span><span class="v">${todas.length - nEnv}</span><span class="sub">ainda não enviadas</span></div>
     </div>
-    <div class="card" style="margin-bottom:var(--sp-lg)">
-      <div class="sec-title"><h2>Avaliadores</h2></div>
-      ${juizes.length ? `<div class="tbl-wrap"><table class="ts-tbl"><thead><tr><th>Avaliador(a)</th><th>Sala</th><th>${esc(horas[0] || "1ª visita")}</th><th>${esc(horas[1] || "2ª visita")}</th></tr></thead>
-        <tbody>${juizes.map((u) => `<tr><td><b>${esc(u.name)}</b></td><td class="small">${esc(roomOf(u, ev.id) || "—")}</td>${cel(u, 0)}${cel(u, 1)}</tr>`).join("")}</tbody></table></div>`
-        : emptyBox("science", "Nenhum avaliador no evento", "Vincule avaliadores na aba Voluntários.")}
-    </div>
-    <div class="card"><div class="sec-title"><h2>Visitas por equipe</h2></div>
-      <div class="row g-2xs wrap">${equipes.map((x) => { const q = visitas.get(x.n) || 0; return `<span class="chip ${q ? "chip-ok" : "chip-out"}" title="${q} visita(s)">${String(x.n).padStart(2, "0")} · ${esc(x.t.name)} · <b>${q}</b></span>`; }).join("")}</div></div>`;
+    ${livres.length ? `<div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Avaliadores sem visita</h2></div>
+      <div class="row g-2xs wrap">${livres.map((u) => `<span class="chip chip-out">${esc(u.name)}${sala(u) ? " · " + esc(sala(u)) : ""}</span>`).join("")}</div></div>` : ""}
+    <div class="card">
+      <div class="sec-title"><h2>Equipes</h2>
+        <label class="row g-2xs small" style="margin-left:auto"><input type="checkbox" id="ts-so" ${ui.tsSoSem ? "checked" : ""}> só as sem avaliador</label></div>
+      ${equipes.length ? `<div class="tbl-wrap"><table class="ts-tbl"><thead><tr><th style="width:34%">Equipe</th><th>Avaliadores</th></tr></thead>
+        <tbody>${(ui.tsSoSem ? semAval : equipes).map(linha).join("")}</tbody></table></div>`
+        : emptyBox("science", "Nenhuma equipe no evento", "Adicione equipes na aba Equipes.")}
+    </div>`;
 
-  $$("[data-ts-cpf]").forEach((sel) => sel.addEventListener("change", async () => {
-    const cpf = sel.dataset.tsCpf, i = +sel.dataset.tsI, n = +sel.value;
-    const cur = [...(store.get("testes", ev.id)?.porCpf?.[cpf] || [])];
+  /* grava o horário i do avaliador (n = nº da equipe; 0 = nenhuma) */
+  const grava = async (cpf, i, n) => {
+    const novo = { ...(store.get("testes", ev.id)?.porCpf || {}) };
+    const cur = [...(novo[cpf] || [])];
     while (cur.length < 2) cur.push(0);
+    const antes = cur[i];
     cur[i] = n;
-    const lista = cur.some(Boolean) ? cur : null;
-    sel.disabled = true;
+    if (cur.some(Boolean)) novo[cpf] = cur; else delete novo[cpf];
     try {
-      const novo = { ...(store.get("testes", ev.id)?.porCpf || {}) };
-      if (lista) novo[cpf] = lista; else delete novo[cpf];
       if (store.backend === "fb") await FB.db.doc("testes/" + ev.id).set({ eventId: ev.id, porCpf: novo });
       store.data.testes = { ...(store.data.testes || {}), [ev.id]: { id: ev.id, eventId: ev.id, porCpf: novo } };
       const u = juizes.find((x) => x.cpf === cpf);
-      await store.audit(ev.id, "Avaliação teste: troca de equipe", `${u?.name || cpf} · visita ${i + 1}: ${n ? parcNome(n) : "nenhuma"}`);
-      toast(`${u?.name || "Avaliador"}: visita ${i + 1} agora é ${n ? parcNome(n) : "nenhuma"}.`);
+      await store.audit(ev.id, "Avaliação teste: troca", `${u?.name || cpf} · ${hora(i)}: ${antes ? parcNome(antes) : "nenhuma"} → ${n ? parcNome(n) : "nenhuma"}`);
+      toast(n ? `${u?.name || "Avaliador"} visita ${parcNome(n)} às ${hora(i)}.` : `${u?.name || "Avaliador"} saiu de ${parcNome(antes)}.`);
       render();
-    } catch (err) { toast("Não foi possível salvar: " + fbMsg(err), "err"); sel.disabled = false; }
+    } catch (err) { toast("Não foi possível salvar: " + fbMsg(err), "err"); }
+  };
+  $("#ts-so")?.addEventListener("change", (e) => { ui.tsSoSem = e.target.checked; render(); });
+  $$("[data-ts-tira]").forEach((b) => b.addEventListener("click", () => { b.disabled = true; grava(b.dataset.tsTira, +b.dataset.tsI, 0); }));
+  $$("[data-ts-add]").forEach((b) => b.addEventListener("click", () => {
+    const n = +b.dataset.tsAdd;
+    const ocup = (u, i) => (porCpf[u.cpf] || [])[i] || 0;
+    openModal({
+      title: "Adicionar avaliador", icon: "person_add",
+      body: `<p class="small muted" style="margin-bottom:var(--sp-md)">Equipe <b>${esc(parcNome(n))}</b></p>
+        <div class="field"><label for="ts-h">Horário</label><select id="ts-h">${[0, 1].map((i) => `<option value="${i}">${esc(hora(i))}</option>`).join("")}</select></div>
+        <div class="field"><label for="ts-u">Avaliador(a)</label><select id="ts-u"></select>
+          <span class="hint" id="ts-aviso"></span></div>`,
+      footer: `<button class="btn btn-text" data-close>Cancelar</button><button class="btn btn-fill" id="ts-ok"><span class="msym">check</span>Adicionar</button>`,
+      onMount: (el, close) => {
+        const hSel = $("#ts-h", el), uSel = $("#ts-u", el);
+        const opcoes = () => {
+          const i = +hSel.value, atual = uSel.value;
+          /* primeiro quem está livre neste horário */
+          const lista = juizes.filter((u) => ocup(u, i) !== n).sort((a, b) => !!ocup(a, i) - !!ocup(b, i));
+          uSel.innerHTML = lista.map((u) => `<option value="${attr(u.cpf)}">${esc(u.name)}${sala(u) ? " · " + esc(sala(u)) : ""}${ocup(u, i) ? " — sai de " + esc(parcNome(ocup(u, i))) : " — livre"}</option>`).join("");
+          if (lista.some((u) => u.cpf === atual)) uSel.value = atual;
+          aviso();
+        };
+        const aviso = () => {
+          const u = juizes.find((x) => x.cpf === uSel.value), o = u && ocup(u, +hSel.value);
+          $("#ts-aviso", el).textContent = o ? `Neste horário ${u.name} estava com ${parcNome(o)}: essa equipe perde a visita.` : "";
+        };
+        hSel.addEventListener("change", opcoes);
+        uSel.addEventListener("change", aviso);
+        opcoes();
+        $("#ts-ok", el).addEventListener("click", () => { if (!uSel.value) return; close(); grava(uSel.value, +hSel.value, n); });
+      },
+    });
   }));
   $$("[data-ts-ver]").forEach((b) => b.addEventListener("click", () => verAvalTeste(store.get("aval_teste", b.dataset.tsVer))));
 }
@@ -4375,6 +4449,236 @@ function renderRubric(root, team, modo = "oficial") {
 
 
 /* ============================================================
+   PÓS-EVENTO — formulário das equipes (antes de ver a rubrica)
+   Mesmas perguntas do Microsoft Forms "Pós evento — Equipes".
+   Evento e nome da equipe vêm do login. Notas: 5..1; 0 = Não houve/NA.
+   Só a Nacional e o Operador Regional veem as respostas.
+   ============================================================ */
+const POS_ESC = [[5, "Muito boa"], [4, "Boa"], [3, "Neutra"], [2, "Ruim"], [1, "Muito ruim"]];
+const POS_FORM = (evNome) => [
+  { sec: "O evento", icon: "celebration", itens: [
+    { id: "geral", tipo: "escolha", req: 1, q: `Qual foi a sua percepção geral do ${evNome}?`, op: POS_ESC.map(([v, l]) => [v, `${v} - ${l}`]) },
+    { id: "evento", tipo: "grade", req: 1, na: 1, q: `Qual foi a sua percepção sobre o ${evNome}?`, linhas: [
+      ["amb", "Estrutura (ambientes físicos)"], ["mesas", "Estrutura (mesas, palco e decoração)"], ["recep", "Recepção das equipes"],
+      ["lanche", "Lanche"], ["brindes", "Brindes"], ["crono", "Cronograma"], ["cord", "Cordialidade da equipe"]] },
+  ] },
+  { sec: "A visão do(a) tutor(a)", icon: "person", itens: [
+    { id: "aval", tipo: "grade", req: 1, q: "Qual foi a sua percepção das AVALIAÇÕES OFICIAIS?", linhas: [
+      ["geral", "Avaliação da equipe no geral"], ["tempo", "Tempo de avaliação"], ["estimulo", "Estímulo das crianças em participarem da avaliação"], ["desloc", "Tempo de deslocamento (se houve)"]] },
+    { id: "aval_just", tipo: "texto", q: "Caso se sinta confortável, por favor, justifique sua resposta." },
+    { id: "curso", tipo: "escolha", req: 1, q: "Sobre o curso online, você participou? Qual sua percepção?", op: [[5, "Muito boa"], [4, "Boa"], [3, "Neutra"], [2, "Ruim"], [1, "Muito ruim"], [0, "Não participei"]] },
+    { id: "extra", tipo: "grade", req: 1, q: "Qual foi a sua percepção sobre a ATIVIDADE EXTRA (outras atividades que aconteceram durante o evento e que os estudantes participaram)?", linhas: [
+      ["geral", "Atividade extra no geral"], ["tempo", "Tempo de atividade"], ["dific", "Dificuldade da atividade"], ["estimulo", "Estímulo das crianças em participar"]] },
+    { id: "extra_txt", tipo: "texto", req: 1, q: "Qual foi sua percepção da atividade extra? Comente rapidamente o que era e o que você mais gostou." },
+    { id: "tut_mais", tipo: "texto", req: 1, q: "O que você (tutor) MAIS GOSTOU NO EVENTO como um todo? Por quê?" },
+    { id: "tut_menos", tipo: "texto", req: 1, q: "O que você (tutor) MENOS GOSTOU NO EVENTO como um todo? Por quê?" },
+    { id: "inspirar", tipo: "texto", req: 1, q: "O que você, como TUTOR, fez para inspirar as crianças durante a jornada da FIRST® LEGO® League Explore, na temporada UNEARTHED?" },
+  ] },
+  { sec: "A visão dos estudantes", icon: "groups", itens: [
+    { id: "est_aval", tipo: "grade", req: 1, na: 1, q: "Qual foi a percepção dos ESTUDANTES das AVALIAÇÕES OFICIAIS?", linhas: [["pit", "Avaliação em PIT"], ["sala", "Avaliação em SALA"]] },
+    { id: "est_aval_just", tipo: "texto", q: "Caso se sinta confortável, por favor, justifique sua resposta." },
+    { id: "est_extra", tipo: "grade", req: 1, q: "Qual foi a percepção dos ESTUDANTES sobre a ATIVIDADE EXTRA?", linhas: [["alianca", "Atividade de aliança"], ["tempo", "Tempo de atividade"], ["dific", "Dificuldade da atividade"]] },
+    { id: "est_extra_txt", tipo: "texto", req: 1, q: "Qual foi a percepção dos estudantes sobre a atividade extra? Comente rapidamente o que eles mais gostaram." },
+    { id: "palavras", tipo: "texto", req: 1, q: "Quais foram as palavras/sentimentos que os estudantes mais falaram/tiveram sobre o evento?" },
+    { id: "depoimento", tipo: "texto", q: "Houve algum depoimento ou situação que as crianças expuseram e que você queira compartilhar conosco? Deixe o registro aqui." },
+    { id: "est_mais", tipo: "texto", req: 1, q: "O que os ESTUDANTES MAIS GOSTARAM NO EVENTO como um todo? Por quê?" },
+    { id: "est_menos", tipo: "texto", req: 1, q: "O que os ESTUDANTES MENOS GOSTARAM NO EVENTO como um todo? Por quê?" },
+  ] },
+  { sec: "Para fechar", icon: "favorite", itens: [
+    { id: "pais", tipo: "texto", q: "Algum comentário ou percepção dos pais e familiares que você queira compartilhar conosco?" },
+    { id: "coment", tipo: "texto", q: "Algum comentário que queira deixar sobre o evento?" },
+    { id: "recadinho", tipo: "texto", q: "Quer deixar algum recadinho de agradecimento para algum voluntário? Faremos questão de enviar para valorizar o trabalho voluntário. Se possível, coloque o nome aqui :D" },
+  ] },
+];
+const posItens = (evNome) => POS_FORM(evNome).flatMap((s) => s.itens);
+const posTxt = (q) => esc(q).replace(/\bFIRST\b/g, "<i>FIRST</i>");
+const posRotulo = (v, na) => v === 0 ? (na ? "Não houve/NA" : "Não participei") : v ? `${v} - ${(POS_ESC.find((x) => x[0] === v) || [])[1] || ""}` : "";
+/* o que falta responder (ids) */
+function posFaltam(r, evNome) {
+  return posItens(evNome).filter((it) => {
+    if (!it.req) return false;
+    if (it.tipo === "texto") return !String(r[it.id] || "").trim();
+    if (it.tipo === "escolha") return r[it.id] == null;
+    return it.linhas.some(([k]) => r[it.id]?.[k] == null);
+  }).map((it) => it.id);
+}
+const posRascKey = () => "explore.pos:" + (session.user?.id || "");
+function posEventoEquipeHtml() {
+  const ev = currentEvent();
+  let r = {};
+  try { r = JSON.parse(localStorage.getItem(posRascKey()) || "{}") || {}; } catch (e) { r = {}; }
+  ui.pos = r;
+  const evNome = ev?.name || "evento";
+  const item = (it) => {
+    const req = it.req ? ` <span class="req">*</span>` : "";
+    if (it.tipo === "texto") return `<div class="field pe-item" data-pe="${it.id}"><label for="pe-${it.id}">${posTxt(it.q)}${req}</label>
+      <textarea id="pe-${it.id}" data-pe-txt="${it.id}" rows="3" maxlength="3000">${esc(r[it.id] || "")}</textarea></div>`;
+    if (it.tipo === "escolha") return `<div class="field pe-item" data-pe="${it.id}"><label>${posTxt(it.q)}${req}</label>
+      <div class="pe-ops">${it.op.map(([v, l]) => `<button type="button" class="pe-op" data-pe-esc="${it.id}" data-v="${v}" aria-pressed="${r[it.id] === v}">${esc(l)}</button>`).join("")}</div></div>`;
+    const cols = [...POS_ESC.map(([v]) => v), ...(it.na ? [0] : [])];
+    return `<div class="field pe-item" data-pe="${it.id}"><label>${posTxt(it.q)}${req}</label>
+      <div class="pe-grade">${it.linhas.map(([k, l]) => `<div class="pe-lin"><span class="pe-lab">${esc(l)}</span>
+        <div class="pe-notas" role="radiogroup" aria-label="${attr(l)}">${cols.map((v) => `<button type="button" class="pe-n ${v ? "n" + v : "na"}" data-pe-g="${it.id}" data-k="${k}" data-v="${v}" title="${attr(posRotulo(v, 1))}" aria-pressed="${r[it.id]?.[k] === v}">${v || "NA"}</button>`).join("")}</div></div>`).join("")}</div></div>`;
+  };
+  return `<div class="card pe-intro" style="margin-bottom:var(--sp-lg)">
+      <span class="msym pe-ico">assignment_turned_in</span>
+      <div><h2>A Rubrica de Avaliação de vocês está pronta! 🎉</h2>
+      <p>Antes de abrir, conte para nós como foi o evento. São alguns minutinhos e a rubrica aparece logo em seguida, nesta mesma página.</p>
+      <p class="small muted">Quem responde é o(a) tutor(a). As respostas vão só para a organização do evento, nunca para os avaliadores. O que você digitar fica guardado neste aparelho até enviar.</p></div></div>
+    <div class="pe-leg small muted">Notas: ${POS_ESC.map(([v, l]) => `<b>${v}</b> ${l}`).join(" · ")} · <b>NA</b> Não houve</div>
+    ${POS_FORM(evNome).map((sec) => `<section class="card pe-sec" style="margin-bottom:var(--sp-lg)">
+      <div class="sec-title"><h2><span class="msym">${sec.icon}</span> ${esc(sec.sec)}</h2></div>
+      <div class="stack g-lg">${sec.itens.map(item).join("")}</div></section>`).join("")}
+    <div style="height:96px"></div>
+    <div class="rub-foot pe-foot">
+      <div class="grow stack g-4xs"><b class="small" id="pe-cont"></b><div class="progress"><i id="pe-prog"></i></div></div>
+      <button class="btn btn-fill" id="pe-enviar"><span class="msym">send</span>Enviar e ver a rubrica</button>
+    </div>`;
+}
+function bindPosEventoEquipe(depois) {
+  const ev = currentEvent(), evNome = ev?.name || "evento";
+  const r = ui.pos || {};
+  const reqs = posItens(evNome).filter((it) => it.req).length;
+  const guarda = () => { try { localStorage.setItem(posRascKey(), JSON.stringify(r)); } catch (e) { /* sem memória */ } };
+  const conta = () => {
+    const f = posFaltam(r, evNome).length;
+    $("#pe-cont").textContent = f ? `Faltam ${f} de ${reqs} perguntas obrigatórias` : "Tudo respondido. Pode enviar!";
+    $("#pe-prog").style.width = ((reqs - f) / reqs) * 100 + "%";
+  };
+  $$("[data-pe-txt]").forEach((t) => t.addEventListener("input", () => { r[t.dataset.peTxt] = t.value; guarda(); conta(); }));
+  $$("[data-pe-esc]").forEach((b) => b.addEventListener("click", () => {
+    r[b.dataset.peEsc] = +b.dataset.v;
+    $$(`[data-pe-esc="${b.dataset.peEsc}"]`).forEach((x) => x.setAttribute("aria-pressed", x === b));
+    guarda(); conta();
+  }));
+  $$("[data-pe-g]").forEach((b) => b.addEventListener("click", () => {
+    const g = b.dataset.peG, k = b.dataset.k;
+    r[g] = { ...(r[g] || {}), [k]: +b.dataset.v };
+    $$(`[data-pe-g="${g}"][data-k="${k}"]`).forEach((x) => x.setAttribute("aria-pressed", x === b));
+    guarda(); conta();
+  }));
+  conta();
+  $("#pe-enviar").addEventListener("click", async (e) => {
+    const falta = posFaltam(r, evNome);
+    if (falta.length) {
+      toast(`Faltam ${falta.length} pergunta(s) obrigatória(s).`, "err");
+      const el = $(`[data-pe="${falta[0]}"]`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      el?.classList.add("flash"); setTimeout(() => el?.classList.remove("flash"), 1400);
+      return;
+    }
+    const t = session.user;
+    const resp = {};
+    posItens(evNome).forEach((it) => {
+      const v = r[it.id];
+      if (it.tipo === "texto") { if (String(v || "").trim()) resp[it.id] = String(v).trim().slice(0, 3000); }
+      else if (it.tipo === "escolha") { if (v != null) resp[it.id] = v; }
+      else if (v) resp[it.id] = Object.fromEntries(it.linhas.filter(([k]) => v[k] != null).map(([k]) => [k, v[k]]));
+    });
+    const doc = { teamId: t.id, eventId: t.eventId, baseId: t.baseId || "", teamName: t.name || "", resp, at: nowISO() };
+    e.currentTarget.disabled = true;
+    try {
+      await FB.db.doc("pos_evento/" + t.id).set({ ...doc, criado: firebase.firestore.FieldValue.serverTimestamp() });
+      store.data.pos_evento = { ...(store.data.pos_evento || {}), [t.id]: { id: t.id, ...doc } };
+      try { localStorage.removeItem(posRascKey()); } catch (err) { /* ok */ }
+      ui.pos = null;
+      toast("Obrigado! Aqui está a rubrica de vocês. 💜");
+      depois();
+      window.scrollTo(0, 0);
+    } catch (err) {
+      e.currentTarget.disabled = false;
+      toast(/permission/.test(err.code || "") ? "Não foi possível enviar: esta equipe já respondeu? Atualize a página." : "Não foi possível enviar agora. Tente de novo em instantes.", "err");
+    }
+  });
+}
+
+/* ---------- aba Pós-evento (Nacional e Operador Regional) ---------- */
+function posLinhasCsv(ev, resp) {
+  const its = posItens(ev.name);
+  const cab = ["Data/Hora", "Equipe"];
+  its.forEach((it) => { if (it.tipo === "grade") it.linhas.forEach(([, l]) => cab.push(`${it.q} [${l}]`)); else cab.push(it.q); });
+  const vistos = new Map();
+  cab.forEach((c, i) => { const q = (vistos.get(c) || 0) + 1; vistos.set(c, q); if (q > 1) cab[i] = `${c} (${q})`; });
+  const linhas = resp.map((r) => {
+    const l = [new Date(r.at).toLocaleString("pt-BR"), r.teamName || store.get("teams", r.teamId)?.name || ""];
+    its.forEach((it) => {
+      const v = r.resp?.[it.id];
+      if (it.tipo === "grade") it.linhas.forEach(([k]) => l.push(v?.[k] == null ? "" : v[k] === 0 ? "NA" : v[k]));
+      else if (it.tipo === "escolha") l.push(v == null ? "" : it.op.find((o) => o[0] === v)?.[1] || v);
+      else l.push(v || "");
+    });
+    return l;
+  });
+  return [cab, ...linhas];
+}
+function renderPosEventoOrg(root) {
+  const ev = currentEvent();
+  const its = posItens(ev.name);
+  const resp = store.all("pos_evento").filter((r) => r.eventId === ev.id).sort((a, b) => (a.teamName || "").localeCompare(b.teamName || "", "pt-BR"));
+  const equipes = teamsOf(ev.id);
+  const faltam = equipes.filter((t) => !resp.some((r) => r.teamId === t.id)).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const media = (vals) => { const v = vals.filter((x) => x > 0); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const barra = (m) => m == null ? `<span class="muted">—</span>` : `<span class="pe-m"><i style="width:${(m / 5) * 100}%"></i></span><b class="mono">${fmt(m, 1)}</b>`;
+  const notas = [];
+  its.forEach((it) => {
+    if (it.tipo === "escolha") notas.push({ q: it.q, m: media(resp.map((r) => r.resp?.[it.id])), n: resp.filter((r) => r.resp?.[it.id] === 0).length, z: it.id === "curso" ? "não participaram" : "" });
+    if (it.tipo === "grade") it.linhas.forEach(([k, l]) => notas.push({ grupo: it.q, q: l, m: media(resp.map((r) => r.resp?.[it.id]?.[k])), n: resp.filter((r) => r.resp?.[it.id]?.[k] === 0).length, z: "NA" }));
+  });
+  let grupoAnt = "";
+  root.innerHTML = `
+    <div class="page-head"><div class="grow"><div class="eyebrow">${eventEyebrow()}</div><h1>Pós-evento</h1>
+      <p class="muted small">Formulário que as equipes respondem antes de ver a Rubrica de Avaliação. Só a Operação Nacional e o Operador Regional veem estas respostas.</p></div>
+      <button class="btn btn-out no-print" id="pe-csv"><span class="msym">download</span>Exportar</button></div>
+    <div class="kpi-grid kpi-4" style="margin-bottom:var(--sp-lg)">
+      <div class="kpi good"><span class="k">Responderam</span><span class="v">${resp.length}</span><span class="sub">de ${equipes.length} equipes</span></div>
+      <div class="kpi ${faltam.length ? "warn" : ""}"><span class="k">Faltam</span><span class="v">${faltam.length}</span><span class="sub">equipes</span></div>
+      <div class="kpi"><span class="k">Percepção geral</span><span class="v">${notas[0]?.m == null ? "—" : fmt(notas[0].m, 1)}</span><span class="sub">média de 1 a 5</span></div>
+    </div>
+    ${settings().released ? "" : `<div class="banner info" style="margin-bottom:var(--sp-lg)"><span class="msym">info</span><div>O formulário aparece para as equipes quando a devolutiva for liberada (Painel › Liberar devolutiva).</div></div>`}
+    ${faltam.length ? `<div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Ainda não responderam</h2></div>
+      <div class="row g-2xs wrap">${faltam.map((t) => `<span class="chip chip-out">${esc(t.name)}</span>`).join("")}</div></div>` : ""}
+    ${resp.length ? `<div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Notas (média de 1 a 5)</h2></div>
+      <div class="tbl-wrap"><table><tbody>${notas.map((x) => {
+        const g = x.grupo && x.grupo !== grupoAnt ? `<tr class="grp"><td colspan="3"><b>${posTxt(x.grupo)}</b></td></tr>` : "";
+        if (x.grupo) grupoAnt = x.grupo;
+        return `${g}<tr><td>${x.grupo ? esc(x.q) : `<b>${posTxt(x.q)}</b>`}</td><td class="pe-mcol">${barra(x.m)}</td><td class="small muted">${x.n ? `${x.n} ${x.z}` : ""}</td></tr>`;
+      }).join("")}</tbody></table></div></div>
+    <div class="card" style="margin-bottom:var(--sp-lg)"><div class="sec-title"><h2>Respostas escritas</h2></div>
+      ${its.filter((it) => it.tipo === "texto").map((it) => {
+        const rs = resp.filter((r) => String(r.resp?.[it.id] || "").trim());
+        return `<details class="sl-room"><summary><b>${posTxt(it.q)}</b><span class="chip chip-out">${rs.length}</span><span class="msym sm right chev">expand_more</span></summary>
+          ${rs.length ? `<ul class="pe-txts">${rs.map((r) => `<li><span class="small muted">${esc(r.teamName || "")}</span><p class="txt">${esc(r.resp[it.id])}</p></li>`).join("")}</ul>` : `<p class="small muted">Nenhuma resposta.</p>`}</details>`;
+      }).join("")}</div>
+    <div class="card"><div class="sec-title"><h2>Por equipe</h2></div>
+      ${resp.map((r) => `<details class="sl-room"><summary><b>${esc(r.teamName || "")}</b><span class="small muted">${fmtDT(r.at)}</span><span class="msym sm right chev">expand_more</span></summary>
+        <dl class="pe-dl">${its.map((it) => {
+          const v = r.resp?.[it.id];
+          const val = it.tipo === "texto" ? esc(v || "—") : it.tipo === "escolha" ? esc(v == null ? "—" : it.op.find((o) => o[0] === v)?.[1] || v)
+            : it.linhas.map(([k, l]) => `${esc(l)}: <b>${v?.[k] == null ? "—" : v[k] === 0 ? "NA" : v[k]}</b>`).join("<br>");
+          return `<dt>${posTxt(it.q)}</dt><dd>${val}</dd>`;
+        }).join("")}</dl>
+        <button class="btn btn-text btn-sm" data-pe-del="${attr(r.id)}" style="color:var(--sys-critical)"><span class="msym sm">restart_alt</span>Apagar e deixar responder de novo</button></details>`).join("")}</div>`
+      : emptyBox("assignment", "Nenhuma resposta ainda", "As respostas aparecem aqui assim que as equipes enviarem.")}`;
+  $$("[data-pe-del]").forEach((b) => b.addEventListener("click", async () => {
+    const r = store.get("pos_evento", b.dataset.peDel);
+    if (!(await confirmModal("Apagar resposta", `A resposta de <b>${esc(r.teamName || "")}</b> será apagada. A equipe volta a ver o formulário antes da rubrica.`, "Apagar", true))) return;
+    try {
+      await FB.db.doc("pos_evento/" + r.id).delete();
+      delete store.data.pos_evento[r.id];
+      await store.audit(ev.id, "Pós-evento apagado", r.teamName || r.teamId);
+      render();
+    } catch (err) { toast("Não foi possível apagar: " + fbMsg(err), "err"); }
+  }));
+  $("#pe-csv").addEventListener("click", () => {
+    const cel = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const linhas = posLinhasCsv(ev, resp).map((l) => l.map(cel).join(";"));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿" + linhas.join("\r\n")], { type: "text/csv;charset=utf-8" }));
+    a.download = "pos-evento-explore.csv"; a.click();
+  });
+}
+
+/* ============================================================
    8.5 EQUIPE — devolutiva
    Só aparece depois que a organização libera. Uma rubrica única:
    em cada critério, média das avaliações ENVIADAS arredondada para
@@ -4459,6 +4763,13 @@ function renderTeamHome(root) {
     </div>`;
     bindRecadoEquipe(() => renderTeamHome(root));
     bindParc();
+    return;
+  }
+
+  /* antes da rubrica: o formulário pós-evento (uma vez por equipe) */
+  if (store.backend === "fb" && !store.get("pos_evento", t.id)) {
+    root.innerHTML = `<div class="team-page">${head.replace(/<button class="btn btn-out no-print" id="tm-print">[\s\S]*?<\/button>/, "")}${posEventoEquipeHtml()}</div>`;
+    bindPosEventoEquipe(() => renderTeamHome(root));
     return;
   }
 
@@ -5407,6 +5718,11 @@ function backupAbas(add) {
     "Data/Hora": fmtDTs(x.at), "Recado": recadoTexto(store.get("recados", x.recadoId) || {}), "Equipe do recado": store.get("teams", store.get("recados", x.recadoId)?.teamId)?.name || "",
     "Resposta": respostaTexto(x), "Emojis": (x.emojis || []).map((i) => RECADO_EMOJIS[i]).filter(Boolean).join(" "),
   })));
+  const pos = store.all("pos_evento").filter((r) => r.eventId === ev.id).sort((a, b) => (a.teamName || "").localeCompare(b.teamName || "", "pt-BR"));
+  if (can.people() && pos.length) {
+    const [cab, ...ls] = posLinhasCsv(ev, pos);
+    add("Pós-evento", ls.map((l) => Object.fromEntries(cab.map((c, i) => [c.slice(0, 250), l[i]]))));
+  }
   if (can.nac() && store.base) {
     add("Base · voluntários", store.base.volunteers.slice().sort(byName).map((v) => ({ "Nome": v.name, "CPF": fmtCPF(v.cpf), "Cidade": v.city || "", "UF": v.uf || "", "Tem senha": v.hasLogin === false ? "não" : "sim" })));
     add("Base · equipes", store.base.teams.slice().sort(byName).map((t) => ({ "Equipe": t.name, "Registro": t.baseId, "Cód.": t.code || "", "Escola": t.school || "", "Cidade": t.city || "", "UF": t.state || "", "Tutor(a)": t.coach || "", "Tem código": t.hasLogin === false ? "não" : "sim" })));
@@ -5423,6 +5739,7 @@ function backupJson() {
     teams: teamsOf(ev.id), rooms: roomsOf(ev.id),
     evaluations: doEvento("evaluations"), aval_teste: doEvento("aval_teste"), settings: doEvento("settings"), deliberation: doEvento("deliberation"),
     recados: doEvento("recados"), respostas: doEvento("respostas"), parcerias: doEvento("parcerias"), parceria_cfg: doEvento("parceria_cfg"), testes: doEvento("testes"),
+    pos_evento: doEvento("pos_evento"),
   };
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify(dados, null, 1)], { type: "application/json" }));
