@@ -1317,7 +1317,7 @@ CPF	Nome	Senha
 /* ============================================================
    1. IDENTIDADE
    ============================================================ */
-const APP_VERSION = "4.1.0";
+const APP_VERSION = "4.2.0";
 
 /* Rubrica de Avaliação — FIRST LEGO League Explore (primeira página do PDF oficial).
    Cada critério recebe um nível de 1 a 4. */
@@ -2781,6 +2781,7 @@ function navTabs() {
   if (can.nac() || myRoles().length) t.push({ id: "sala", icon: "diversity_3", label: "Sala" });
   if (store.backend === "fb" && (can.nac() || myRoles().length) && recadosParaMim().length) t.push({ id: "recados", icon: "mail", label: "Recados" });
   if (podeParceria()) t.push({ id: "parceria", icon: "handshake", label: "Parceria" });
+  if (store.backend === "fb" && (can.evalOrg() || can.people())) t.push({ id: "teste", icon: "science", label: "Teste" });
   if (cronoCfg() && (can.nac() || myRoles().length)) t.push({ id: "cronograma", icon: "schedule", label: "Cronograma" });
   if (can.evalOrg()) t.push({ id: "painel", icon: "dashboard", label: "Painel" }, { id: "delib", icon: "gavel", label: "Deliberação" }, { id: "nivel", icon: "balance", label: "Nivelamento" });
   if (can.people()) t.push({ id: "voluntarios", icon: "badge", label: "Voluntários" }, { id: "equipes", icon: "groups", label: "Equipes" }, { id: "salas", icon: "meeting_room", label: "Salas" });
@@ -2853,6 +2854,7 @@ function viewApp() {
   if (tab === "sala") return renderSala(root);
   if (tab === "recados") return renderRecados(root);
   if (tab === "parceria") return renderParceria(root);
+  if (tab === "teste") return renderTesteOrg(root);
 }
 
 /* ============================================================
@@ -3056,9 +3058,98 @@ function testesHtml(compacto) {
       const stt = evalStatus(av);
       return `<li class="${agora ? "cr-agora" : ""} ${passou && stt === "sent" ? "cr-passou" : ""}"><span class="mono cr-h">${esc(x.ini)}${x.fim ? "–" + esc(x.fim) : ""}</span>
         <span class="cr-t"><span class="small muted">nº ${String(x.n).padStart(2, "0")}</span> <b>${esc(x.nome)}</b></span>${agora ? `<span class="chip chip-ok">Agora</span>` : ""}
-        ${x.team && can.judge() ? (stt === "sent" ? `<span class="chip chip-ok"><span class="msym">task_alt</span>Enviada</span>`
+        ${x.team && can.judge() ? (stt === "sent" ? `<span class="chip chip-ok"><span class="msym">task_alt</span>Enviada</span><a class="btn btn-text btn-sm" href="#/teste/${attr(encodeURIComponent(x.team.id))}"><span class="msym sm">edit</span>Alterar</a>`
           : `<a class="btn ${stt === "pending" ? "btn-fill" : "btn-tonal"} btn-sm" href="#/teste/${attr(encodeURIComponent(x.team.id))}"><span class="msym sm">${stt === "pending" ? "science" : "edit"}</span>${stt === "pending" ? "Avaliar (teste)" : "Continuar"}</a>`) : ""}</li>`;
     }).join("")}</ol></div>`;
+}
+
+/* ---------- aba Teste (organização): quem visita quais equipes, status e troca ---------- */
+function renderTesteOrg(root) {
+  const ev = currentEvent();
+  const porCpf = store.get("testes", ev.id)?.porCpf || {};
+  const equipes = teamsOf(ev.id).map((t) => ({ t, n: parcNumero(t.name) })).filter((x) => x.n).sort((a, b) => a.n - b.n);
+  const salaOrd = new Map(roomsOf(ev.id).map((r, i) => [r.id, i]));
+  const juizes = peopleOf(ev.id).filter((u) => u.cpf && u.roles[ev.id].includes("avaliador"))
+    .sort((a, b) => (salaOrd.get(judgeRoomId(a, ev.id)) ?? 999) - (salaOrd.get(judgeRoomId(b, ev.id)) ?? 999) || a.name.localeCompare(b.name, "pt-BR"));
+  const horas = (() => { const d = cronoDados(ev); return [...new Set((d?.master || []).flatMap((m) => (m.calls || []).filter((c) => /teste/i.test(c.title)).map(() => m.time)))].sort(); })();
+  const avDe = (u, n) => { const t = equipes.find((x) => x.n === n)?.t; return t ? store.get("aval_teste", evalId(t.id, "vol-" + u.cpf)) : null; };
+  const todas = store.all("aval_teste").filter((e) => e.eventId === ev.id);
+  const nEnv = todas.filter((e) => e.status === "sent").length;
+  const nDesig = juizes.reduce((a, u) => a + (porCpf[u.cpf] || []).filter(Boolean).length, 0);
+  const visitas = new Map();
+  juizes.forEach((u) => (porCpf[u.cpf] || []).forEach((n) => n && visitas.set(n, (visitas.get(n) || 0) + 1)));
+  const cel = (u, i) => {
+    const n = (porCpf[u.cpf] || [])[i] || 0;
+    const av = n ? avDe(u, n) : null;
+    const st = evalStatus(av);
+    return `<td><select class="ts-sel" data-ts-cpf="${attr(u.cpf)}" data-ts-i="${i}" aria-label="Equipe ${i + 1} de ${attr(u.name)}">
+        <option value="0">— nenhuma —</option>
+        ${equipes.map((x) => `<option value="${x.n}" ${x.n === n ? "selected" : ""}>${String(x.n).padStart(2, "0")} · ${esc(x.t.name)}</option>`).join("")}
+      </select>
+      ${n ? `<div class="row g-2xs" style="margin-top:4px">${evalChip(st)}${av ? `<button class="btn btn-text btn-sm" data-ts-ver="${attr(av.id)}"><span class="msym sm">visibility</span>Ver</button>` : ""}</div>` : ""}</td>`;
+  };
+  root.innerHTML = `
+    <div class="page-head"><div class="grow"><div class="eyebrow">${eventEyebrow()}</div><h1>Avaliação teste</h1>
+      <p class="muted small">As equipes que cada avaliador visita para treinar antes de começar. Trocou aqui, muda na hora para o avaliador. Não conta para a avaliação oficial nem aparece para as equipes.</p></div></div>
+    <div class="kpi-grid kpi-4" style="margin-bottom:var(--sp-lg)">
+      <div class="kpi"><span class="k">Visitas marcadas</span><span class="v">${nDesig}</span><span class="sub">${juizes.length} avaliadores</span></div>
+      <div class="kpi good"><span class="k">Enviadas</span><span class="v">${nEnv}</span><span class="sub">avaliações teste</span></div>
+      <div class="kpi ${todas.length - nEnv ? "warn" : ""}"><span class="k">Em rascunho</span><span class="v">${todas.length - nEnv}</span><span class="sub">ainda não enviadas</span></div>
+    </div>
+    <div class="card" style="margin-bottom:var(--sp-lg)">
+      <div class="sec-title"><h2>Avaliadores</h2></div>
+      ${juizes.length ? `<div class="tbl-wrap"><table class="ts-tbl"><thead><tr><th>Avaliador(a)</th><th>Sala</th><th>${esc(horas[0] || "1ª visita")}</th><th>${esc(horas[1] || "2ª visita")}</th></tr></thead>
+        <tbody>${juizes.map((u) => `<tr><td><b>${esc(u.name)}</b></td><td class="small">${esc(roomOf(u, ev.id) || "—")}</td>${cel(u, 0)}${cel(u, 1)}</tr>`).join("")}</tbody></table></div>`
+        : emptyBox("science", "Nenhum avaliador no evento", "Vincule avaliadores na aba Voluntários.")}
+    </div>
+    <div class="card"><div class="sec-title"><h2>Visitas por equipe</h2></div>
+      <div class="row g-2xs wrap">${equipes.map((x) => { const q = visitas.get(x.n) || 0; return `<span class="chip ${q ? "chip-ok" : "chip-out"}" title="${q} visita(s)">${String(x.n).padStart(2, "0")} · ${esc(x.t.name)} · <b>${q}</b></span>`; }).join("")}</div></div>`;
+
+  $$("[data-ts-cpf]").forEach((sel) => sel.addEventListener("change", async () => {
+    const cpf = sel.dataset.tsCpf, i = +sel.dataset.tsI, n = +sel.value;
+    const cur = [...(store.get("testes", ev.id)?.porCpf?.[cpf] || [])];
+    while (cur.length < 2) cur.push(0);
+    cur[i] = n;
+    const lista = cur.some(Boolean) ? cur : null;
+    sel.disabled = true;
+    try {
+      const novo = { ...(store.get("testes", ev.id)?.porCpf || {}) };
+      if (lista) novo[cpf] = lista; else delete novo[cpf];
+      if (store.backend === "fb") await FB.db.doc("testes/" + ev.id).set({ eventId: ev.id, porCpf: novo });
+      store.data.testes = { ...(store.data.testes || {}), [ev.id]: { id: ev.id, eventId: ev.id, porCpf: novo } };
+      const u = juizes.find((x) => x.cpf === cpf);
+      await store.audit(ev.id, "Avaliação teste: troca de equipe", `${u?.name || cpf} · visita ${i + 1}: ${n ? parcNome(n) : "nenhuma"}`);
+      toast(`${u?.name || "Avaliador"}: visita ${i + 1} agora é ${n ? parcNome(n) : "nenhuma"}.`);
+      render();
+    } catch (err) { toast("Não foi possível salvar: " + fbMsg(err), "err"); sel.disabled = false; }
+  }));
+  $$("[data-ts-ver]").forEach((b) => b.addEventListener("click", () => verAvalTeste(store.get("aval_teste", b.dataset.tsVer))));
+}
+function verAvalTeste(e) {
+  if (!e) return;
+  const st = evalStatus(e);
+  openModal({
+    title: "Avaliação teste", icon: "science", size: "wide",
+    body: `<p class="small muted" style="margin-bottom:var(--sp-md)"><b>${esc(e.judgeName || judgeLabel(e))}</b> · ${esc(e.teamName || "")} · ${evalChip(st)}
+        ${st === "sent" ? " · enviada em " + fmtDT(e.sentAt) : " · última alteração " + fmtDT(e.updatedAt)}</p>
+      <div class="final-grid">
+        <aside class="sum-box"><div class="sum-head"><span class="msym sm">checklist</span>Notas · nota ${fmtN(evalTotal(e))}/${MAX_TOTAL}</div>${summaryHTML(e)}</aside>
+        <div class="final-body stack g-md">
+          <div class="kv"><span class="k">Indica para a próxima etapa?</span>
+            <span>${e.recommend === true ? `<span class="chip chip-ok"><span class="msym">thumb_up</span>Sim</span>` : e.recommend === false ? `<span class="chip chip-crit"><span class="msym">thumb_down</span>Não</span>` : `<span class="muted">—</span>`}</span></div>
+          <div class="kv"><span class="k">Comentários para a equipe</span><p class="txt">${esc(e.comments || "—")}</p></div>
+          <div class="kv org-note ${String(e.orgComments || "").trim() ? "" : "empty"}"><span class="k"><span class="msym sm">visibility_off</span>Comentários para a organização</span><p class="txt">${esc(e.orgComments || "—")}</p></div>
+        </div>
+      </div>`,
+    footer: `<button class="btn btn-text" data-x-del style="color:var(--sys-critical)"><span class="msym sm">delete</span>Apagar</button><span class="grow"></span><button class="btn btn-fill" data-close>Fechar</button>`,
+    onMount: (el, close) => {
+      $("[data-x-del]", el)?.addEventListener("click", async () => {
+        if (!(await confirmModal("Apagar avaliação teste", `A avaliação teste de <b>${esc(e.judgeName || "")}</b> para <b>${esc(e.teamName || "")}</b> será apagada e o avaliador poderá começar de novo.`, "Apagar", true))) return;
+        try { await store.remove("aval_teste", e.id); close(); toast("Avaliação teste apagada."); render(); }
+        catch (err) { toast("Não foi possível apagar: " + fbMsg(err), "err"); }
+      });
+    },
+  });
 }
 
 /* ---------- aba Cronograma (voluntários do evento) ---------- */
@@ -4058,7 +4149,8 @@ function renderRubric(root, team, modo = "oficial") {
   e.scores = e.scores || {};
   e.excede = e.excede || {};
   const st = evalStatus(saved);
-  const ro = !canEdit(saved);
+  /* no teste o avaliador pode alterar mesmo depois de enviar (não conta para nada oficial) */
+  const ro = modo === "teste" ? false : !canEdit(saved);
   const dis = ro ? "disabled" : "";
   const meta = [team.number && `nº ${team.number}`, team.school, team.city].filter(Boolean).map(esc).join(" · ");
 
@@ -4081,6 +4173,7 @@ function renderRubric(root, team, modo = "oficial") {
       ${modo === "teste" ? `<div class="banner warn rb-modo"><span class="msym">science</span><div><b>Avaliação TESTE.</b> Não conta para a avaliação oficial nem aparece para a equipe: serve para o nivelamento dos avaliadores antes de começar.</div></div>` : ""}
       ${modo === "treino" ? `<div class="banner info rb-modo"><span class="msym">school</span><div class="grow"><b>Treino.</b> A Equipe de Treino é fictícia: use à vontade para conhecer a rubrica. Fica só neste aparelho e não é enviado a ninguém.</div>
         <button class="btn btn-out btn-sm" id="rb-treino-zera"><span class="msym sm">restart_alt</span>Apagar e recomeçar</button></div>` : ""}
+      ${modo === "teste" && st === "sent" ? `<div class="banner ok" style="margin-bottom:var(--sp-md)"><span class="msym">task_alt</span><div>Avaliação teste enviada${saved.sentAt ? " em " + fmtDT(saved.sentAt) : ""}. Você ainda pode alterar: as mudanças são salvas sozinhas.</div></div>` : ""}
       ${ro && modo !== "oficial" ? `<div class="banner ok" style="margin-bottom:var(--sp-md)"><span class="msym">task_alt</span><div>${modo === "treino" ? "Treino concluído." : "Avaliação teste enviada."}</div></div>` : ""}
       ${ro && modo === "oficial" ? `<div class="banner ok" style="margin-bottom:var(--sp-md)"><span class="msym">task_alt</span>
         <div>Avaliação <b>${evalNo(saved)}</b> enviada ${saved.sentAt ? "em " + fmtDT(saved.sentAt) : ""}. Para alterar, peça à organização para reabrir.</div></div>` : ""}
@@ -4154,7 +4247,7 @@ function renderRubric(root, team, modo = "oficial") {
           <div class="progress"><i id="rb-prog"></i></div>
         </div>
         ${ro ? `<button class="btn btn-out" id="rb-back2"><span class="msym">arrow_back</span>Voltar</button>`
-             : `<button class="btn btn-fill" id="rb-send"><span class="msym">send</span>Enviar avaliação</button>`}
+             : `<button class="btn btn-fill" id="rb-send"><span class="msym">send</span>${modo === "teste" && st === "sent" ? "Reenviar" : "Enviar avaliação"}</button>`}
       </div>
     </div>`;
 
@@ -4164,9 +4257,11 @@ function renderRubric(root, team, modo = "oficial") {
     clearTimeout(timer);
     timer = null;
     const cur = fonte.get();
-    if (cur && !canEdit(cur)) return;                  /* travada em outro aparelho */
+    if (cur && !canEdit(cur) && modo !== "teste") return;   /* travada em outro aparelho */
     if (!e.createdAt) e.createdAt = cur?.createdAt || nowISO();
     const body = { ...e, judgeName: session.user.name, teamName: team.name, status: cur?.status === "reopened" ? "reopened" : "draft" };
+    /* teste já enviado: continua enviado enquanto estiver completo */
+    if (modo === "teste" && cur?.status === "sent") body.status = missingItems(e).length ? "draft" : "sent";
     ui.silent = true;
     const p = fonte.put(body);
     ui.silent = false;
